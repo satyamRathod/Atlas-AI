@@ -1,0 +1,33 @@
+# dependencies
+node_modules
+
+# logs
+*.log
+logs
+
+# env
+.env
+.env.*
+
+!.env.example
+
+# build
+dist
+build
+coverage
+
+# turbo
+.turbo
+
+# vite
+vite.config.ts.timestamp-*
+
+# editor
+.vscode
+.idea
+
+# macOS
+.DS_Store
+
+# misc
+*.tsbuildinfo

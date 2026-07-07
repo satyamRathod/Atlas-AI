@@ -6,11 +6,29 @@
     "node": ">=24.0.0",
     "pnpm": ">=11"
   },
-  "scripts": {},
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "format": "biome format . --write",
+    "lint": "biome check .",
+    "check": "biome check . --write"
+  },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@commitlint/cli": "^21.2.0",
+    "@commitlint/config-conventional": "^21.2.0",
     "@types/node": "^26.1.0",
+    "eslint": "^10.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.8",
+    "prettier": "^3.9.4",
     "tsx": "^4.23.0",
     "turbo": "^2.10.3",
     "typescript": "^6.0.3"
+  },
+  "lint-staged": {
+    "*.{js,ts,json,md,yml,yaml}": [
+      "biome check --write"
+    ]
   }
 }

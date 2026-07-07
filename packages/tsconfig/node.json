@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  "extends": "./base.json",
+
+  "compilerOptions": {
+    "target": "ES2024",
+
+    "module": "NodeNext",
+
+    "moduleResolution": "NodeNext",
+
+    "lib": ["ES2024"],
+
+    "strict": true,
+
+    "noUncheckedIndexedAccess": true,
+
+    "exactOptionalPropertyTypes": true,
+
+    "noImplicitOverride": true,
+
+    "noImplicitReturns": true,
+
+    "noFallthroughCasesInSwitch": true,
+
+    "useUnknownInCatchVariables": true,
+
+    "verbatimModuleSyntax": true,
+
+    "isolatedModules": true,
+
+    "resolveJsonModule": true,
+
+    "declaration": true,
+
+    "sourceMap": true,
+
+    "incremental": true,
+
+    "esModuleInterop": false,
+
+    "skipLibCheck": true
+  }
+}

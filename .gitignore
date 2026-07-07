@@ -31,3 +31,5 @@ vite.config.ts.timestamp-*
 
 # misc
 *.tsbuildinfo
+
+.pnpm-store

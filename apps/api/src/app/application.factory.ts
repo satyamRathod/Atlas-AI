@@ -5,6 +5,7 @@ import { OpenAIProvider } from '../ai/providers/openai-provider.js';
 import { env } from '../config/index.js';
 import { createApp } from '../http/app.js';
 import { createHttpServer } from '../http/server.js';
+import { logger } from '../infrastructure/logger/index.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
 import type { Application } from './application.js';
@@ -24,6 +25,7 @@ export function buildApplication(): Application {
   const llmProvider = new OpenAIProvider({
     client: openAIClient,
     model: env.OPENAI_MODEL,
+    logger,
   });
 
   /*

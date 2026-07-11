@@ -1,7 +1,7 @@
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 
-import app from './app.js';
+import type { Express } from 'express';
 
-const server = createServer(app);
-
-export default server;
+export function createHttpServer(app: Express): Server {
+  return createServer(app);
+}

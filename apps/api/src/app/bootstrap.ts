@@ -1,15 +1,18 @@
 import { env } from '../config/index.js';
-import server from '../http/server.js';
-import { logger } from '../infrastructure/logger/logger.js';
+import { logger } from '../infrastructure/logger/index.js';
 
-export async function bootstrap() {
+import { buildApplication } from './application.factory.js';
+
+export async function bootstrap(): Promise<void> {
+  const { server } = buildApplication();
+
   server.listen(env.PORT, () => {
     logger.info(
       {
         port: env.PORT,
         environment: env.NODE_ENV,
       },
-      'Atlas API started',
+      `${env.APP_NAME} started successfully`,
     );
   });
 }

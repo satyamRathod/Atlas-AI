@@ -8,7 +8,8 @@ export const logger = pino({
   timestamp: pino.stdTimeFunctions.isoTime,
 
   base: {
-    service: 'atlas-api',
+    service: env.APP_NAME,
+    environment: env.NODE_ENV,
   },
 
   ...(env.NODE_ENV === 'development'
@@ -17,6 +18,7 @@ export const logger = pino({
           target: 'pino-pretty',
           options: {
             colorize: true,
+            translateTime: 'SYS:standard',
           },
         },
       }

@@ -4,14 +4,14 @@ import { env } from '../../config/index.js';
 
 const router: Router = Router();
 
-router.get('/', (_, res: Response) => {
+router.get('/', (_, res: Response): void => {
   res.status(200).json({
     status: 'UP',
     service: 'atlas-api',
-    version: '0.0.1',
     environment: env.NODE_ENV,
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
+    version: process.env.npm_package_version,
   });
 });
 

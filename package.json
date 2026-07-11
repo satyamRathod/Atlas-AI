@@ -1,7 +1,7 @@
 {
-  "name": "Atlas-AI",
+  "name": "atlas-ai",
   "private": true,
-  "packageManager": "pnpm@11.0.0",
+  "packageManager": "pnpm@11.11.0",
   "engines": {
     "node": ">=24.0.0",
     "pnpm": ">=11"
@@ -11,17 +11,16 @@
     "build": "turbo run build",
     "format": "biome format . --write",
     "lint": "biome check .",
-    "check": "biome check . --write"
+    "check": "biome check . --write",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.2",
     "@commitlint/cli": "^21.2.0",
     "@commitlint/config-conventional": "^21.2.0",
     "@types/node": "^26.1.0",
-    "eslint": "^10.6.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
-    "prettier": "^3.9.4",
     "tsx": "^4.23.0",
     "turbo": "^2.10.3",
     "typescript": "^6.0.3"

@@ -23,7 +23,17 @@ export function createApp({ chatController }: AppDependencies): Express {
 
   app.use(helmet());
   app.use(cors());
-  app.use(compression());
+  app.use(
+    compression({
+      filter: (req, res) => {
+        if (req.headers.accept === 'text/event-stream') {
+          return false;
+        }
+
+        return compression.filter(req, res);
+      },
+    }),
+  );
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));

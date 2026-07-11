@@ -7,5 +7,7 @@ export function createChatRouter(controller: ChatController): Router {
 
   router.post('/', controller.handle);
 
+  router.get('/stream', controller.stream.bind(controller));
+
   return router;
 }

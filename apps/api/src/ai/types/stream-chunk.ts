@@ -2,6 +2,9 @@ import type { Usage } from './usage.js';
 
 export type StreamChunk =
   | {
+      type: 'start';
+    }
+  | {
       type: 'text';
       text: string;
     }
@@ -11,4 +14,8 @@ export type StreamChunk =
     }
   | {
       type: 'done';
+    }
+  | {
+      type: 'error';
+      message: string;
     };

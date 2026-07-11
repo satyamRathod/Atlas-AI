@@ -24,4 +24,15 @@ export class ChatService {
       createdAt: new Date().toISOString(),
     };
   }
+
+  async stream(message: string) {
+    return this.llm.stream({
+      messages: [
+        {
+          role: 'user',
+          content: message,
+        },
+      ],
+    });
+  }
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import type { LLMProvider } from '../../ai/providers/llm-provider.js';
-
+import type { LLMProvider } from '../../ai/contracts/llm-provider.js';
+import type { StreamOptions } from '../../ai/types/stream-options.js';
 import type { ChatRequestInput } from './chat.schema.js';
 import type { ChatResponse } from './chat.types.js';
 
@@ -25,14 +25,17 @@ export class ChatService {
     };
   }
 
-  async stream(message: string) {
-    return this.llm.stream({
-      messages: [
-        {
-          role: 'user',
-          content: message,
-        },
-      ],
-    });
+  async stream(message: string, options?: StreamOptions) {
+    return this.llm.stream(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: message,
+          },
+        ],
+      },
+      options,
+    );
   }
 }

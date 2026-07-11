@@ -1,4 +1,4 @@
-import type OpenAI from 'openai';
+import OpenAI from 'openai';
 import type { Logger } from 'pino';
 import { OpenAIRequestBuilder } from '../builders/openai-request.builder.js';
 import type { LLMProvider } from '../contracts/llm-provider.js';
@@ -7,6 +7,7 @@ import { mapOpenAIStreamEvent } from '../mappers/openai-stream.mapper.js';
 import type { GenerateRequest } from '../types/generate-request.js';
 import type { GenerateResponse } from '../types/generate-response.js';
 import type { StreamChunk } from '../types/stream-chunk.js';
+import type { StreamOptions } from '../types/stream-options.js';
 
 interface OpenAIProviderOptions {
   client: OpenAI;
@@ -60,20 +61,33 @@ export class OpenAIProvider implements LLMProvider {
     }
   }
 
-  async *stream(request: GenerateRequest): AsyncIterable<StreamChunk> {
+  async *stream(request: GenerateRequest, options?: StreamOptions): AsyncIterable<StreamChunk> {
     const sdkRequest = new OpenAIRequestBuilder({
       request,
       model: this.options.model,
     }).buildStream();
 
-    const stream = await this.options.client.responses.create(sdkRequest);
+    try {
+      const stream = await this.options.client.responses.create(sdkRequest, {
+        signal: options?.signal,
+      });
 
-    for await (const event of stream) {
-      const chunks = mapOpenAIStreamEvent(event);
-
-      for (const chunk of chunks) {
-        yield chunk;
+      for await (const event of stream) {
+        const chunks = mapOpenAIStreamEvent(event);
+        for (const chunk of chunks) {
+          yield chunk;
+        }
       }
+    } catch (error) {
+      if (error instanceof OpenAI.APIUserAbortError) {
+        this.options.logger.debug('LLM stream cancelled by client');
+
+        return;
+      }
+
+      this.options.logger.error({ error }, 'LLM stream failed');
+
+      throw error;
     }
   }
 }

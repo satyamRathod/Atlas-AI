@@ -8,6 +8,7 @@ import { createHttpServer } from '../http/server.js';
 import { logger } from '../infrastructure/logger/index.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
+import { InMemoryConversationStore } from '../modules/chat/infrastructure/in-memory-conversation-store.js';
 import type { Application } from './application.js';
 
 export function buildApplication(): Application {
@@ -34,6 +35,7 @@ export function buildApplication(): Application {
    |--------------------------------------------------------------------------
    */
 
+  const conversationStore = new InMemoryConversationStore();
   const chatService = new ChatService(llmProvider);
 
   /*

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../../../ai/types/message.js';
+import type { ChatMessage } from './chat-message.js';
 
 export class ChatSession {
   constructor(

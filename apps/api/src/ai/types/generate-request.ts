@@ -1,5 +1,5 @@
+import type { ChatMessage } from '../../modules/chat/domain/chat-message.js';
 import type { ExecutionOptions } from './execution-options.js';
-import type { ChatMessage } from './message.js';
 
 export interface GenerateRequest {
   messages: ChatMessage[];

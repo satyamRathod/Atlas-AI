@@ -1,9 +1,12 @@
+import type { Usage } from '../../ai/types/usage.js';
+
 export interface ChatRequest {
   message: string;
 }
 
 export interface ChatResponse {
-  id: string;
+  sessionId: string;
   reply: string;
-  createdAt: string;
+  model: string;
+  usage?: Usage;
 }

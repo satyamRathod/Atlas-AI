@@ -34,8 +34,13 @@ export class ChatController {
           abortController.abort();
         }
       });
-      const stream = await this.chatService.stream(req.query.message as string, {
-        signal: abortController.signal,
+
+      const stream = this.chatService.stream({
+        message: req.query.message as string,
+        ...(req.query.sessionId ? { sessionId: req.query.sessionId as string } : {}),
+        options: {
+          signal: abortController.signal,
+        },
       });
 
       for await (const chunk of stream) {

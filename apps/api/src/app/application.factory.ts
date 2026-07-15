@@ -36,7 +36,7 @@ export function buildApplication(): Application {
    */
 
   const conversationStore = new InMemoryConversationStore();
-  const chatService = new ChatService(llmProvider);
+  const chatService = new ChatService(llmProvider, conversationStore);
 
   /*
    |--------------------------------------------------------------------------

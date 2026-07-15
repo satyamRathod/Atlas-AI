@@ -6,6 +6,7 @@ import { env } from '../config/index.js';
 import { createApp } from '../http/app.js';
 import { createHttpServer } from '../http/server.js';
 import { logger } from '../infrastructure/logger/index.js';
+import { PromptBuilder } from '../modules/chat/application/prompt-builder.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
 import { InMemoryConversationStore } from '../modules/chat/infrastructure/in-memory-conversation-store.js';
@@ -36,7 +37,8 @@ export function buildApplication(): Application {
    */
 
   const conversationStore = new InMemoryConversationStore();
-  const chatService = new ChatService(llmProvider, conversationStore);
+  const promptBuilder = new PromptBuilder();
+  const chatService = new ChatService(llmProvider, conversationStore, promptBuilder);
 
   /*
    |--------------------------------------------------------------------------

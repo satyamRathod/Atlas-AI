@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { LLMProvider } from '../../ai/contracts/llm-provider.js';
 import type { StreamChunk } from '../../ai/types/stream-chunk.js';
 import type { StreamOptions } from '../../ai/types/stream-options.js';
+import type { PromptBuilder } from './application/prompt-builder.js';
 import type { ChatRequestInput } from './chat.schema.js';
 import type { ChatResponse } from './chat.types.js';
 import type { ConversationStore } from './contracts/conversation-store.js';
@@ -12,15 +13,14 @@ export class ChatService {
   constructor(
     private readonly provider: LLMProvider,
     private readonly conversationStore: ConversationStore,
+    private readonly promptBuilder: PromptBuilder,
   ) {}
 
   async execute(request: ChatRequestInput): Promise<ChatResponse> {
     const session = await this.getOrCreateSession(request.sessionId);
 
     session.addUserMessage(request.message);
-    const response = await this.provider.generate({
-      messages: session.getMessages(),
-    });
+    const response = await this.provider.generate(this.promptBuilder.build(session));
 
     session.addAssistantMessage(response.text);
     await this.conversationStore.save(session);
@@ -48,12 +48,7 @@ export class ChatService {
 
     let assistantResponse = '';
 
-    for await (const chunk of this.provider.stream(
-      {
-        messages: session.getMessages(),
-      },
-      options,
-    )) {
+    for await (const chunk of this.provider.stream(this.promptBuilder.build(session), options)) {
       if (chunk.type === 'text') {
         assistantResponse += chunk.text;
       } else if (chunk.type === 'done') {

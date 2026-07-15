@@ -2,6 +2,7 @@
 
 import OpenAI from 'openai';
 import { OpenAIProvider } from '../ai/providers/openai-provider.js';
+import { SimpleTokenCounter } from '../ai/tokens/infrastructure/simple-token-counter.js';
 import { TokenBudgetManager } from '../ai/tokens/token-budget-manager.js';
 import { env } from '../config/index.js';
 import { createApp } from '../http/app.js';
@@ -38,11 +39,14 @@ export function buildApplication(): Application {
    */
 
   const conversationStore = new InMemoryConversationStore();
+  const tokenCounter = new SimpleTokenCounter();
+
   const tokenBudgetManager = new TokenBudgetManager({
     contextWindow: 8192,
     reservedOutputTokens: 1024,
   });
-  const promptBuilder = new PromptBuilder(tokenBudgetManager);
+
+  const promptBuilder = new PromptBuilder(tokenBudgetManager, tokenCounter);
   const chatService = new ChatService(llmProvider, conversationStore, promptBuilder);
 
   /*

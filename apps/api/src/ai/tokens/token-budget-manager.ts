@@ -17,4 +17,8 @@ export class TokenBudgetManager {
       availableInputTokens,
     };
   }
+
+  fits(inputTokens: number): boolean {
+    return inputTokens <= this.createBudget().availableInputTokens;
+  }
 }

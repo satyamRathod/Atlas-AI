@@ -1,6 +1,7 @@
 // import { EchoProvider } from "../ai/providers/echo-provider.js";
 
 import OpenAI from 'openai';
+import { ContextWindowTrimmer } from '../ai/context/context-window-trimmer.js';
 import { OpenAIProvider } from '../ai/providers/openai-provider.js';
 import { SimpleTokenCounter } from '../ai/tokens/infrastructure/simple-token-counter.js';
 import { TokenBudgetManager } from '../ai/tokens/token-budget-manager.js';
@@ -46,7 +47,12 @@ export function buildApplication(): Application {
     reservedOutputTokens: 1024,
   });
 
-  const promptBuilder = new PromptBuilder(tokenBudgetManager, tokenCounter);
+  const trimmer = new ContextWindowTrimmer({
+    tokenCounter,
+    tokenBudgetManager,
+  });
+
+  const promptBuilder = new PromptBuilder(tokenBudgetManager, tokenCounter, trimmer);
   const chatService = new ChatService(llmProvider, conversationStore, promptBuilder);
 
   /*

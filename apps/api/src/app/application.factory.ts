@@ -2,6 +2,7 @@
 
 import OpenAI from 'openai';
 import { OpenAIProvider } from '../ai/providers/openai-provider.js';
+import { TokenBudgetManager } from '../ai/tokens/token-budget-manager.js';
 import { env } from '../config/index.js';
 import { createApp } from '../http/app.js';
 import { createHttpServer } from '../http/server.js';
@@ -37,7 +38,11 @@ export function buildApplication(): Application {
    */
 
   const conversationStore = new InMemoryConversationStore();
-  const promptBuilder = new PromptBuilder();
+  const tokenBudgetManager = new TokenBudgetManager({
+    contextWindow: 8192,
+    reservedOutputTokens: 1024,
+  });
+  const promptBuilder = new PromptBuilder(tokenBudgetManager);
   const chatService = new ChatService(llmProvider, conversationStore, promptBuilder);
 
   /*

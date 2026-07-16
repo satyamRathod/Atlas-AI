@@ -9,6 +9,7 @@ import { env } from '../config/index.js';
 import { createApp } from '../http/app.js';
 import { createHttpServer } from '../http/server.js';
 import { logger } from '../infrastructure/logger/index.js';
+import { ConversationSummarizer } from '../modules/chat/application/conversation-summarizer.js';
 import { PromptBuilder } from '../modules/chat/application/prompt-builder.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
@@ -52,7 +53,10 @@ export function buildApplication(): Application {
     tokenBudgetManager,
   });
 
-  const promptBuilder = new PromptBuilder(tokenBudgetManager, tokenCounter, trimmer);
+  const summarizer = new ConversationSummarizer();
+
+  const promptBuilder = new PromptBuilder(tokenBudgetManager, tokenCounter, trimmer, summarizer);
+
   const chatService = new ChatService(llmProvider, conversationStore, promptBuilder);
 
   /*

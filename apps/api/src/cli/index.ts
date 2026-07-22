@@ -1,16 +1,17 @@
-import { ingestCommand } from './commands/ingest.js';
+import { commands } from './registry.js';
 
-const command = process.argv[2];
+const [, , commandName, ...args] = process.argv;
 
-switch (command) {
-  case 'ingest':
-    await ingestCommand();
-    break;
+const command = commands.find((c) => c.name === commandName);
 
-  default:
-    console.log(`
-Available commands
+if (!command) {
+  console.log('Available commands:\n');
 
-pnpm ai ingest
-`);
+  for (const c of commands) {
+    console.log(`${c.name.padEnd(12)} ${c.description}`);
+  }
+
+  process.exit(1);
 }
+
+await command.execute(args);

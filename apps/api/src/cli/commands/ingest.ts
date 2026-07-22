@@ -1,15 +1,27 @@
-import { MarkdownLoader } from '@/ai/knowledge/loader/index.js';
+import { MarkdownLoader } from '@/ai/knowledge/loader/markdown-loader.js';
+import { MarkdownParser } from '@/ai/knowledge/parser/markdown-parser.js';
+import type { Command } from '../command.js';
 
-export async function ingestCommand() {
-  console.log('📚 Atlas AI Ingestion\n');
+export class IngestCommand implements Command {
+  readonly name = 'ingest';
 
-  const loader = new MarkdownLoader();
+  readonly description = 'Load markdown knowledge';
 
-  const documents = await loader.loadDocuments();
+  async execute(): Promise<void> {
+    console.log('📚 Atlas AI Ingestion\n');
 
-  console.log(`✓ Loaded ${documents.length} documents\n`);
+    const loader = new MarkdownLoader();
 
-  for (const document of documents) {
-    console.log(`• ${document.source}`);
+    const parser = new MarkdownParser();
+
+    const rawDocuments = await loader.loadDocuments();
+
+    const documents = rawDocuments.map((document) => parser.parse(document));
+
+    console.log(`✓ Loaded ${documents.length} documents\n`);
+
+    for (const doc of documents) {
+      console.log(`• ${doc.source}`);
+    }
   }
 }

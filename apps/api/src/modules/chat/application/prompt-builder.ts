@@ -18,7 +18,7 @@ export class PromptBuilder {
 
     const tokenCount = this.tokenCounter.countMessages(originalMessages);
 
-    const budget = this.budgetManager.createBudget();
+    // const budget = this.budgetManager.createBudget();
 
     let messages = originalMessages;
 

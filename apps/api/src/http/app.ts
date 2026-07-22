@@ -4,7 +4,7 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { httpLogger } from '../infrastructure/logger/index.js';
 import type { ChatController } from '../modules/chat/chat.controller.js';
-import { createChatRouter } from '../modules/chat/chat.route.js';
+import { createChatRouter } from '../modules/chat/index.js';
 import healthRouter from '../modules/health/health.route.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { notFoundHandler } from './middleware/not-found.js';

@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "build": "tsc && tsc-alias",
+    "start": "node dist/index.js",
+    "ai": "tsx src/cli/index.ts"
   },
   "dependencies": {
     "compression": "^1.8.1",

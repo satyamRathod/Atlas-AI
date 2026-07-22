@@ -4,6 +4,11 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
+    "baseUrl": "./src",
+
+    "paths": {
+      "@/*": ["*"]
+    },
     "ignoreDeprecations": "6.0"
   },
 

@@ -36,16 +36,6 @@ export interface DocumentChunk {
   content: string;
 
   /**
-   * Inclusive start offset within the original document.
-   */
-  startOffset: number;
-
-  /**
-   * Exclusive end offset within the original document.
-   */
-  endOffset: number;
-
-  /**
    * Metadata inherited from the parent document.
    */
   metadata: DocumentMetadata;

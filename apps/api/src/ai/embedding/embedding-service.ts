@@ -1,14 +1,9 @@
 import type { DocumentChunk } from '../knowledge/models/document-chunk.js';
-import type { EmbeddedChunk } from './embedding-model.js';
+import type { EmbeddingResult } from './embedding-result.js';
 
 /**
- * Contract implemented by all embedding providers.
+ * Generates vector embeddings.
  */
 export interface EmbeddingService {
-  /**
-   * Generates embeddings for one or more chunks.
-   *
-   * Providers should internally batch requests whenever possible.
-   */
-  embed(chunks: readonly DocumentChunk[]): Promise<readonly EmbeddedChunk[]>;
+  embed(chunks: readonly DocumentChunk[]): Promise<readonly EmbeddingResult[]>;
 }

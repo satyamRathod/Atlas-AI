@@ -1,18 +1,35 @@
-import { KnowledgeModule } from './knowledge-module.js';
+import type OpenAI from 'openai';
+import type { Logger } from 'pino';
+
+import { ProviderEmbeddingService } from '../embedding/provider-embedding-service.js';
+import { OpenAIEmbeddingProvider } from '../providers/openai-embedding-provider.js';
+
+export interface KernelOptions {
+  client: OpenAI;
+
+  logger: Logger;
+
+  embeddingModel: string;
+}
 
 /**
- * Atlas AI application kernel.
+ * Application composition root.
  *
- * The kernel acts as the composition root for the application.
- * It is responsible for constructing and exposing application modules.
+ * Responsible for constructing shared infrastructure and exposing
+ * application-wide dependencies.
  */
 export class Kernel {
   /**
-   * Knowledge module.
+   * Embedding service used throughout the application.
    */
-  public readonly knowledge: KnowledgeModule;
+  public readonly embeddingService: ProviderEmbeddingService;
 
-  constructor() {
-    this.knowledge = new KnowledgeModule();
+  constructor(options: KernelOptions) {
+    const embeddingProvider = new OpenAIEmbeddingProvider({
+      client: options.client,
+      model: options.embeddingModel,
+    });
+
+    this.embeddingService = new ProviderEmbeddingService(embeddingProvider);
   }
 }

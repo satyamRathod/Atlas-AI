@@ -9,3 +9,36 @@ Planner
 Agent workflows
 Evaluation and observability
 Production deployment and scaling
+
+
+Atlas AI
+
+│
+
+├── Core
+
+├── LLM
+
+├── Prompt
+
+├── Conversation
+
+├── Memory
+
+├── Knowledge Base (RAG)
+
+├── Embeddings
+
+├── Retrieval
+
+├── Tools
+
+├── Planner
+
+├── Workflow
+
+├── Agents
+
+├── Evaluation
+
+├── Observability

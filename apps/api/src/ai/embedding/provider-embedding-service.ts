@@ -23,9 +23,21 @@ export class ProviderEmbeddingService implements EmbeddingService {
       input: chunks.map((chunk) => chunk.content),
     });
 
-    return response.data.map((embedding, index) => ({
-      input: chunks[index]!,
-      vector: embedding.embedding,
-    }));
+    const results: EmbeddingResult[] = [];
+
+    for (const [index, embedding] of response.data.entries()) {
+      const chunk = chunks.at(index);
+
+      if (chunk === undefined) {
+        throw new Error(`Embedding response index ${index} has no matching input chunk.`);
+      }
+
+      results.push({
+        input: chunk,
+        vector: embedding.embedding,
+      });
+    }
+
+    return results;
   }
 }

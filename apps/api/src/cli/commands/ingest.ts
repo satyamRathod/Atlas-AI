@@ -1,6 +1,4 @@
-import { TextChunker } from '@/ai/knowledge/chunker/text-chunker.js';
-import { MarkdownLoader } from '@/ai/knowledge/loader/markdown-loader.js';
-import { MarkdownParser } from '@/ai/knowledge/parser/markdown-parser.js';
+import { Kernel } from '@/ai/kernel/index.js';
 import type { Command } from '../command.js';
 
 export class IngestCommand implements Command {
@@ -8,21 +6,19 @@ export class IngestCommand implements Command {
 
   readonly description = 'Load markdown knowledge';
 
-  async execute(): Promise<void> {
+  public async execute(): Promise<void> {
     console.log('📚 Atlas AI Ingestion\n');
 
-    const loader = new MarkdownLoader();
-    const parser = new MarkdownParser();
+    const kernel = new Kernel();
 
-    const rawDocuments = await loader.loadDocuments();
+    const rawDocuments = await kernel.knowledge.loader.loadDocuments();
 
-    const documents = rawDocuments.map((document) => parser.parse(document));
-    const chunker = new TextChunker();
+    const documents = rawDocuments.map((document) => kernel.knowledge.parser.parse(document));
 
     let totalChunks = 0;
 
     for (const document of documents) {
-      const chunks = await chunker.chunk(document);
+      const chunks = await kernel.knowledge.chunker.chunk(document);
 
       totalChunks += chunks.length;
 

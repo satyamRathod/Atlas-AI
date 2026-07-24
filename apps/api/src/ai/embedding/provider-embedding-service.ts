@@ -1,31 +1,29 @@
-import type OpenAI from 'openai';
-
 import type { DocumentChunk } from '../knowledge/models/document-chunk.js';
+import type { EmbeddingProvider } from '../providers/contracts/embedding-provider.js';
 import type { EmbeddingResult } from './embedding-result.js';
 import type { EmbeddingService } from './embedding-service.js';
 
 /**
- * Embedding service backed by an OpenAI-compatible provider.
+ * Generates embeddings using the configured provider.
+ *
+ * This service maps Atlas AI domain models to the provider contract.
  */
 export class ProviderEmbeddingService implements EmbeddingService {
-  constructor(
-    private readonly client: OpenAI,
-    private readonly model: string,
-  ) {}
+  constructor(private readonly provider: EmbeddingProvider) {}
 
+  /**
+   * Generate embeddings for document chunks.
+   */
   public async embed(chunks: readonly DocumentChunk[]): Promise<readonly EmbeddingResult[]> {
     if (chunks.length === 0) {
       return [];
     }
 
-    const response = await this.client.embeddings.create({
-      model: this.model,
-      input: chunks.map((chunk) => chunk.content),
-    });
+    const vectors = await this.provider.embed(chunks.map((chunk) => chunk.content));
 
     const results: EmbeddingResult[] = [];
 
-    for (const [index, embedding] of response.data.entries()) {
+    for (const [index, vector] of vectors.entries()) {
       const chunk = chunks.at(index);
 
       if (chunk === undefined) {
@@ -34,7 +32,7 @@ export class ProviderEmbeddingService implements EmbeddingService {
 
       results.push({
         input: chunk,
-        vector: embedding.embedding,
+        vector,
       });
     }
 

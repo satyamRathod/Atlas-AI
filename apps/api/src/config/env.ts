@@ -10,9 +10,15 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   APP_NAME: z.string().default('atlas-api'),
+  // Chat Provider (Groq/OpenAI compatible)
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-5'),
   OPENAI_BASE_URL: z.string().optional(),
+  // Embedding Provider (DeepInfra)
+  LOCAL_EMBEDDING_MODEL: z.string().default('BAAI/bge-small-en-v1.5'),
+  // Vector Store (Qdrant)
+  QDRANT_URL: z.string().default('http://localhost:6333'),
+  QDRANT_COLLECTION: z.string().default('knowledge'),
 });
 
 //validate environment variables

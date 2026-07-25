@@ -15,7 +15,7 @@ export interface DocumentMetadata {
   /**
    * Searchable tags.
    */
-  tags: string[];
+  tags?: string[];
 
   /**
    * Creation date.

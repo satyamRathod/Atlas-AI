@@ -4,7 +4,7 @@ import { ProviderEmbeddingService } from '@/ai/embeddings/provider-embedding-ser
 import { TextChunker } from '@/ai/knowledge/chunker/text-chunker.js';
 import { MarkdownLoader } from '@/ai/knowledge/loader/markdown-loader.js';
 import { MarkdownParser } from '@/ai/knowledge/parser/markdown-parser.js';
-import { OpenAIEmbeddingProvider } from '@/ai/providers/openai-embedding-provider.js';
+import { TransformersEmbeddingProvider } from '@/ai/providers/transformers-embedding-provider.js';
 import { env } from '@/config/index.js';
 // import { logger } from '@/infrastructure/logger/index.js';
 
@@ -19,14 +19,8 @@ export interface CliServices {
  * Builds dependencies required by CLI commands.
  */
 export function buildCli(): CliServices {
-  const client = new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
-    baseURL: env.OPENAI_BASE_URL,
-  });
-
-  const embeddingProvider = new OpenAIEmbeddingProvider({
-    client,
-    model: 'text-embedding-3-small',
+  const embeddingProvider = new TransformersEmbeddingProvider({
+    model: env.LOCAL_EMBEDDING_MODEL,
   });
 
   return {

@@ -1,4 +1,4 @@
-import { Kernel } from '@/ai/kernel/index.js';
+import { buildCli } from '../cli.factory.js';
 import type { Command } from '../command.js';
 
 export class IngestCommand implements Command {
@@ -9,16 +9,16 @@ export class IngestCommand implements Command {
   public async execute(): Promise<void> {
     console.log('📚 Atlas AI Ingestion\n');
 
-    const kernel = new Kernel();
+    const cli = buildCli();
 
-    const rawDocuments = await kernel.knowledge.loader.loadDocuments();
+    const rawDocuments = await cli.loader.loadDocuments();
 
-    const documents = rawDocuments.map((document) => kernel.knowledge.parser.parse(document));
+    const documents = rawDocuments.map((document) => cli.parser.parse(document));
 
     let totalChunks = 0;
 
     for (const document of documents) {
-      const chunks = await kernel.knowledge.chunker.chunk(document);
+      const chunks = await cli.chunker.chunk(document);
 
       totalChunks += chunks.length;
 

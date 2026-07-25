@@ -1,4 +1,4 @@
-import type { EmbeddingResult } from '../../embedding/embedding-result.js';
+import type { EmbeddingResult } from '../../embeddings/embedding-result.js';
 import type { DocumentChunk, KnowledgeDocument } from '../models/index.js';
 
 /**

@@ -1,6 +1,6 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 
-import type { VectorStore } from './vector-store.js';
+import type { VectorPoint, VectorStore } from './vector-store.js';
 
 export interface QdrantVectorStoreOptions {
   url: string;
@@ -18,17 +18,38 @@ export class QdrantVectorStore implements VectorStore {
   public async createCollection(collection: string, dimensions: number): Promise<void> {
     const exists = await this.client.collectionExists(collection);
 
+    console.log('Collection exists:', exists);
+
     if (exists.exists) {
       return;
     }
 
-    await this.client.createCollection(collection, {
+    console.log(`Creating collection '${collection}'...`);
+
+    const result = await this.client.createCollection(collection, {
       vectors: {
         size: dimensions,
         distance: 'Cosine',
       },
     });
 
-    console.log(`✅ Created collection '${collection}'`);
+    console.log(result);
+  }
+
+  public async upsert(collection: string, points: readonly VectorPoint[]): Promise<void> {
+    if (points.length === 0) {
+      return;
+    }
+
+    await this.client.upsert(collection, {
+      wait: true,
+      points: points.map((point) => ({
+        id: point.id,
+        vector: [...point.vector],
+        payload: point.payload,
+      })),
+    });
+
+    console.log(`Stored ${points.length} vectors`);
   }
 }

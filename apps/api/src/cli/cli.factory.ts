@@ -1,10 +1,9 @@
-import OpenAI from 'openai';
-
 import { ProviderEmbeddingService } from '@/ai/embeddings/provider-embedding-service.js';
 import { TextChunker } from '@/ai/knowledge/chunker/text-chunker.js';
 import { MarkdownLoader } from '@/ai/knowledge/loader/markdown-loader.js';
 import { MarkdownParser } from '@/ai/knowledge/parser/markdown-parser.js';
 import { TransformersEmbeddingProvider } from '@/ai/providers/transformers-embedding-provider.js';
+import { QdrantVectorStore } from '@/ai/vector-store/qdrant-vector-store.js';
 import { env } from '@/config/index.js';
 // import { logger } from '@/infrastructure/logger/index.js';
 
@@ -13,6 +12,7 @@ export interface CliServices {
   parser: MarkdownParser;
   chunker: TextChunker;
   embeddingService: ProviderEmbeddingService;
+  vectorStore: QdrantVectorStore;
 }
 
 /**
@@ -28,5 +28,8 @@ export function buildCli(): CliServices {
     parser: new MarkdownParser(),
     chunker: new TextChunker(),
     embeddingService: new ProviderEmbeddingService(embeddingProvider),
+    vectorStore: new QdrantVectorStore({
+      url: env.QDRANT_URL,
+    }),
   };
 }

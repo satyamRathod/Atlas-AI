@@ -1,3 +1,5 @@
+import { toVectorPoint } from '@/ai/vector-store/vector-point.mapper.js';
+import { env } from '@/config/env.js';
 import { buildCli } from '../cli.factory.js';
 import type { Command } from '../command.js';
 
@@ -10,19 +12,6 @@ export class IngestCommand implements Command {
     console.log('📚 Atlas AI Ingestion\n');
 
     const cli = buildCli();
-    const vectors = await cli.embeddingService.embed([
-      {
-        id: '1',
-        index: 0,
-        content: 'JWT tokens are used for authentication.',
-        metadata: {},
-        source: 'test',
-        documentId: '1',
-      },
-    ]);
-
-    console.log(vectors[0]?.vector.length);
-    console.log(vectors[0]?.vector.slice(0, 10));
 
     const rawDocuments = await cli.loader.loadDocuments();
 
@@ -30,12 +19,25 @@ export class IngestCommand implements Command {
 
     let totalChunks = 0;
 
+    let collectionCreated = false;
+
     for (const document of documents) {
       const chunks = await cli.chunker.chunk(document);
 
       totalChunks += chunks.length;
 
       const embeddings = await cli.embeddingService.embed(chunks);
+
+      if (!collectionCreated) {
+        await cli.vectorStore.createCollection(
+          env.QDRANT_COLLECTION,
+          embeddings[0]?.vector?.length ?? 0,
+        );
+
+        collectionCreated = true;
+      }
+
+      await cli.vectorStore.upsert(env.QDRANT_COLLECTION, embeddings.map(toVectorPoint));
 
       console.log(`\n📄 ${document.title}`);
       console.log(`   ${chunks.length} chunk(s)`);

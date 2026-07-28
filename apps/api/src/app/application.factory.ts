@@ -1,6 +1,11 @@
 // import { EchoProvider } from "../ai/providers/echo-provider.js";
 
 import OpenAI from 'openai';
+import { ProviderEmbeddingService } from '@/ai/embeddings/provider-embedding-service.js';
+import { TransformersEmbeddingProvider } from '@/ai/providers/transformers-embedding-provider.js';
+import { SemanticRetriever } from '@/ai/retrieval/semantic-retriever.js';
+import { QdrantVectorStore } from '@/ai/vector-store/qdrant-vector-store.js';
+import { SemanticRetrievalContextProvider } from '@/modules/chat/application/semantic-retrieval-context-provider.js';
 import { ContextWindowTrimmer } from '../ai/context/context-window-trimmer.js';
 import { OpenAIProvider } from '../ai/providers/openai-provider.js';
 import { SimpleTokenCounter } from '../ai/tokens/infrastructure/simple-token-counter.js';
@@ -48,6 +53,29 @@ export function buildApplication(): Application {
     reservedOutputTokens: 1024,
   });
 
+  const vectorStore = new QdrantVectorStore({
+    url: env.QDRANT_URL,
+  });
+
+  const embeddingProvider = new TransformersEmbeddingProvider({
+    model: env.LOCAL_EMBEDDING_MODEL,
+  });
+
+  const embeddingService = new ProviderEmbeddingService(embeddingProvider);
+
+  const retriever = new SemanticRetriever({
+    collection: env.QDRANT_COLLECTION,
+    embeddingService,
+    vectorStore,
+    retrieval: {
+      candidateLimit: 20,
+      minScore: 0.65,
+      maxChunks: 5,
+    },
+  });
+
+  const contextProvider = new SemanticRetrievalContextProvider(retriever);
+
   const trimmer = new ContextWindowTrimmer({
     tokenCounter,
     tokenBudgetManager,
@@ -57,7 +85,12 @@ export function buildApplication(): Application {
 
   const promptBuilder = new PromptBuilder(tokenBudgetManager, tokenCounter, trimmer, summarizer);
 
-  const chatService = new ChatService(llmProvider, conversationStore, promptBuilder);
+  const chatService = new ChatService(
+    llmProvider,
+    conversationStore,
+    promptBuilder,
+    contextProvider,
+  );
 
   /*
    |--------------------------------------------------------------------------

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { EmbeddingResult } from '@/ai/embeddings/index.js';
 import type { VectorPoint } from './vector-store.js';
 

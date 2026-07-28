@@ -1,4 +1,3 @@
-import { env } from '@/config/env.js';
 import { buildCli } from '../cli.factory.js';
 import type { Command } from '../command.js';
 

@@ -26,7 +26,7 @@ export class IngestCommand implements Command {
 
       totalChunks += chunks.length;
 
-      const embeddings = await cli.embeddingService.embed(chunks);
+      const embeddings = await cli.embeddingService.embedDocuments(chunks);
 
       if (!collectionCreated) {
         await cli.vectorStore.createCollection(

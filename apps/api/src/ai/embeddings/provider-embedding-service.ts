@@ -14,7 +14,9 @@ export class ProviderEmbeddingService implements EmbeddingService {
   /**
    * Generate embeddings for document chunks.
    */
-  public async embed(chunks: readonly DocumentChunk[]): Promise<readonly EmbeddingResult[]> {
+  public async embedDocuments(
+    chunks: readonly DocumentChunk[],
+  ): Promise<readonly EmbeddingResult[]> {
     if (chunks.length === 0) {
       return [];
     }
@@ -37,5 +39,11 @@ export class ProviderEmbeddingService implements EmbeddingService {
     }
 
     return results;
+  }
+
+  public async embedQuery(query: string): Promise<readonly number[]> {
+    const [vector] = await this.provider.embed([query]);
+
+    return vector ?? [];
   }
 }

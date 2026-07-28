@@ -1,6 +1,6 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 
-import type { VectorPoint, VectorStore } from './vector-store.js';
+import type { SearchResult, VectorPoint, VectorStore } from './vector-store.js';
 
 export interface QdrantVectorStoreOptions {
   url: string;
@@ -51,5 +51,22 @@ export class QdrantVectorStore implements VectorStore {
     });
 
     console.log(`Stored ${points.length} vectors`);
+  }
+
+  public async search(
+    collection: string,
+    vector: readonly number[],
+    limit: number,
+  ): Promise<readonly SearchResult[]> {
+    const response = await this.client.query(collection, {
+      query: [...vector],
+      limit,
+      with_payload: true,
+    });
+
+    return response.points.map((point) => ({
+      score: point.score ?? 0,
+      payload: (point.payload ?? {}) as Record<string, unknown>,
+    }));
   }
 }

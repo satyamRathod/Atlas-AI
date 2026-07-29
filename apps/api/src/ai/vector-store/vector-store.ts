@@ -1,3 +1,4 @@
+import type { VectorSearchRequest } from './vector-search-request.js';
 export interface VectorPoint {
   id: string;
   vector: readonly number[];
@@ -8,15 +9,10 @@ export interface SearchResult {
   score: number;
   payload: Record<string, unknown>;
 }
-
 export interface VectorStore {
   createCollection(collection: string, dimensions: number): Promise<void>;
 
   upsert(collection: string, points: readonly VectorPoint[]): Promise<void>;
 
-  search(
-    collection: string,
-    vector: readonly number[],
-    limit: number,
-  ): Promise<readonly SearchResult[]>;
+  search(collection: string, request: VectorSearchRequest): Promise<readonly SearchResult[]>;
 }

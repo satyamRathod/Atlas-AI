@@ -1,5 +1,5 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
-
+import type { VectorSearchRequest } from './vector-search-request.js';
 import type { SearchResult, VectorPoint, VectorStore } from './vector-store.js';
 
 export interface QdrantVectorStoreOptions {
@@ -55,12 +55,11 @@ export class QdrantVectorStore implements VectorStore {
 
   public async search(
     collection: string,
-    vector: readonly number[],
-    limit: number,
+    request: VectorSearchRequest,
   ): Promise<readonly SearchResult[]> {
     const response = await this.client.query(collection, {
-      query: [...vector],
-      limit,
+      query: [...request.vector],
+      limit: request.limit,
       with_payload: true,
     });
 

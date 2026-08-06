@@ -19,6 +19,10 @@ const envSchema = z.object({
   // Vector Store (Qdrant)
   QDRANT_URL: z.string().default('http://localhost:6333'),
   QDRANT_COLLECTION: z.string().default('knowledge'),
+  KNOWLEDGE_DIRECTORY: z.string().default('knowledge'),
+  TEXT_CHUNK_SIZE: z.coerce.number().int().min(1).default(500),
+  TEXT_CHUNK_OVERLAP: z.coerce.number().int().min(1).default(100),
+  INDEX_BATCH_SIZE: z.coerce.number().int().min(1).default(100),
 });
 
 //validate environment variables

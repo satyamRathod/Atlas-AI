@@ -1,48 +1,70 @@
 import { randomUUID } from 'node:crypto';
-import type { LLMProvider } from '../../ai/contracts/llm-provider.js';
-import type { StreamChunk } from '../../ai/types/stream-chunk.js';
-import type { StreamOptions } from '../../ai/types/stream-options.js';
-import type { PromptBuilder } from './application/prompt-builder.js';
-import type { RetrievalContextProvider } from './application/retrieval-context-provider.js';
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import {
+  AIMessage,
+  type AIMessageChunk,
+  type BaseMessage,
+  HumanMessage,
+} from '@langchain/core/messages';
+import type { Runnable } from '@langchain/core/runnables';
+import { concat } from '@langchain/core/utils/stream';
+
+import { env } from '@/config/env.js';
+import { ragPrompt } from '@/langchain/prompts/index.js';
+import type { RetrievedChunk, Retriever } from '@/langchain/retrievers/index.js';
+
 import type { ChatRequestInput } from './chat.schema.js';
-import type { ChatResponse } from './chat.types.js';
-import type { ConversationStore } from './contracts/conversation-store.js';
-import { ChatSession } from './domain/chat-session.js';
+import type { ChatCitation, ChatResponse, StreamChunk, StreamOptions } from './chat.types.js';
+import type { InMemoryChatHistoryStore } from './infrastructure/in-memory-chat-history-store.js';
+
+interface RagChainInput {
+  context: string;
+  history: BaseMessage[];
+  question: string;
+}
 
 export class ChatService {
+  /** LCEL chain: prompt template piped into the active chat model provider. */
+  private readonly chain: Runnable<RagChainInput, AIMessageChunk>;
+
   constructor(
-    private readonly provider: LLMProvider,
-    private readonly conversationStore: ConversationStore,
-    private readonly promptBuilder: PromptBuilder,
-    private readonly contextProvider: RetrievalContextProvider,
-  ) {}
+    private readonly chatModel: BaseChatModel,
+    private readonly retriever: Retriever,
+    private readonly historyStore: InMemoryChatHistoryStore,
+  ) {
+    this.chain = ragPrompt.pipe(this.chatModel);
+  }
 
-  async execute(request: ChatRequestInput): Promise<ChatResponse> {
-    const session = await this.getOrCreateSession(request.sessionId);
+  public async invoke(request: ChatRequestInput): Promise<ChatResponse> {
+    const sessionId = request.sessionId ?? randomUUID();
 
-    session.addUserMessage(request.message);
-    const context = await this.contextProvider.getContext(request.message);
+    const [history, chunks] = await Promise.all([
+      this.historyStore.getMessages(sessionId),
+      this.retriever.retrieve(request.message),
+    ]);
 
-    const prompt = this.promptBuilder.build(session, context);
+    const response = await this.chain.invoke({
+      context: this.buildContext(chunks),
+      history,
+      question: request.message,
+    });
 
-    const response = await this.provider.generate(prompt);
-
-    session.addAssistantMessage(response.text);
-    await this.conversationStore.save(session);
+    await this.historyStore.append(
+      sessionId,
+      new HumanMessage(request.message),
+      new AIMessage(response.text),
+    );
 
     return {
-      sessionId: session.id,
+      sessionId,
       reply: response.text,
-      model: response.model,
-      citations: context.chunks.map((chunk) => ({
-        source: chunk.source,
-        chunk: chunk.index,
-      })),
-      ...(response.usage ? { usage: response.usage } : {}),
+      model: env.GROQ_MODEL,
+      citations: this.toCitations(chunks),
+      ...(response.usage_metadata ? { usage: response.usage_metadata } : {}),
     };
   }
 
-  async *stream({
+  public async *stream({
     message,
     sessionId,
     options,
@@ -51,38 +73,65 @@ export class ChatService {
     sessionId?: string;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
-    const session = await this.getOrCreateSession(sessionId);
+    const sid = sessionId ?? randomUUID();
 
-    session.addUserMessage(message);
+    const [history, chunks] = await Promise.all([
+      this.historyStore.getMessages(sid),
+      this.retriever.retrieve(message),
+    ]);
 
-    let assistantResponse = '';
+    const citations = this.toCitations(chunks);
 
-    const context = await this.contextProvider.getContext(message);
+    yield { type: 'citations', sessionId: sid, citations };
 
-    const prompt = this.promptBuilder.build(session, context);
+    let fullText = '';
+    let aggregated: AIMessage | undefined;
 
-    for await (const chunk of this.provider.stream(prompt, options)) {
-      if (chunk.type === 'text') {
-        assistantResponse += chunk.text;
-      } else if (chunk.type === 'done') {
-        session.addAssistantMessage(assistantResponse);
+    const streamIterable = await this.chain.stream(
+      {
+        context: this.buildContext(chunks),
+        history,
+        question: message,
+      },
+      options?.signal ? { signal: options.signal } : {},
+    );
+
+    for await (const part of streamIterable) {
+      aggregated = aggregated ? concat(aggregated, part) : part;
+
+      if (part.text) {
+        fullText += part.text;
+        yield { type: 'token', sessionId: sid, text: part.text };
       }
-
-      yield chunk;
     }
 
-    await this.conversationStore.save(session);
+    await this.historyStore.append(sid, new HumanMessage(message), new AIMessage(fullText));
+
+    yield {
+      type: 'done',
+      sessionId: sid,
+      model: env.GROQ_MODEL,
+      ...(aggregated?.usage_metadata ? { usage: aggregated.usage_metadata } : {}),
+    };
   }
 
-  private async getOrCreateSession(sessionId?: string): Promise<ChatSession> {
-    if (sessionId) {
-      const session = await this.conversationStore.get(sessionId);
-
-      if (session) {
-        return session;
-      }
+  private buildContext(chunks: RetrievedChunk[]): string {
+    if (chunks.length === 0) {
+      return 'No relevant context was found in the knowledge base.';
     }
 
-    return new ChatSession(randomUUID());
+    return chunks
+      .map((chunk, i) => `[${i + 1}] (source: ${chunk.source})\n${chunk.content}`)
+      .join('\n\n');
+  }
+
+  private toCitations(chunks: RetrievedChunk[]): ChatCitation[] {
+    return chunks.map((chunk, i) => ({
+      index: i + 1,
+      source: chunk.source,
+      ...(chunk.title ? { title: chunk.title } : {}),
+      score: chunk.score,
+      snippet: chunk.content.length > 200 ? `${chunk.content.slice(0, 200)}…` : chunk.content,
+    }));
   }
 }

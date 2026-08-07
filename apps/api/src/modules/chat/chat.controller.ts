@@ -10,7 +10,7 @@ export class ChatController {
   public handle: RequestHandler = async (req: Request, res: Response): Promise<void> => {
     const request = chatRequestSchema.parse(req.body);
 
-    const response = await this.chatService.execute(request);
+    const response = await this.chatService.invoke(request);
     res.status(200).json(response);
   };
 

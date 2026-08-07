@@ -20,7 +20,13 @@
     }
   },
 
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+
   "files": {
-    "includes": ["**", "!dist", "!coverage", "!.turbo"]
+    "includes": ["**", "!dist", "!coverage", "!.turbo", "!docker/qdrant"]
   }
 }

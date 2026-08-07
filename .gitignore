@@ -33,3 +33,7 @@ vite.config.ts.timestamp-*
 *.tsbuildinfo
 
 .pnpm-store
+
+# Qdrant's bind-mounted storage volume (docker-compose.yml at repo root) —
+# pure runtime data, nothing here should ever be committed.
+docker/qdrant/

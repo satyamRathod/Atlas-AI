@@ -1,1 +1,1 @@
-export * from './knowledge-loader.factory.js';
+export * from './create-knowledge-loader.js';

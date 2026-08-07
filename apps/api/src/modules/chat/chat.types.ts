@@ -1,12 +1,15 @@
-import type { Usage } from '../../ai/types/usage.js';
+import type { UsageMetadata } from '@langchain/core/messages';
 
-export interface ChatRequest {
-  message: string;
+export interface StreamOptions {
+  signal?: AbortSignal;
 }
 
 export interface ChatCitation {
+  index: number;
   source: string;
-  chunk: number;
+  title?: string;
+  score: number;
+  snippet: string;
 }
 
 export interface ChatResponse {
@@ -14,5 +17,17 @@ export interface ChatResponse {
   reply: string;
   model: string;
   citations: readonly ChatCitation[];
-  usage?: Usage;
+  usage?: UsageMetadata;
+}
+
+export type StreamChunkType = 'citations' | 'token' | 'done' | 'error';
+
+export interface StreamChunk {
+  type: StreamChunkType;
+  sessionId?: string;
+  text?: string;
+  citations?: readonly ChatCitation[];
+  model?: string;
+  usage?: UsageMetadata;
+  message?: string;
 }

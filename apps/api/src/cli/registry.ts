@@ -1,5 +1,5 @@
 import type { Command } from './command.js';
-import { IngestCommand } from './commands/ingest.js';
-import { SearchCommand } from './commands/search.js';
+import { KnowledgeIndexCommand } from './commands/knowledge-index.command.js';
+import { KnowledgeSearchCommand } from './commands/knowledge-search.command.js';
 
-export const commands: Command[] = [new IngestCommand(), new SearchCommand()];
+export const commands: Command[] = [new KnowledgeIndexCommand(), new KnowledgeSearchCommand()];

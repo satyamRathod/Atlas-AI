@@ -1,8 +1,8 @@
 import type { Request, RequestHandler, Response } from 'express';
 import { closeSSE, initializeSSE, sendSSE } from '../../http/sse.js';
 import { logger } from '../../infrastructure/logger/logger.js';
-import { chatRequestSchema } from './chat.schema.js';
-import type { ChatService } from './chat.service.js';
+import { chatRequestSchema, chatStreamQuerySchema } from './chat.schema.js';
+import { type ChatService, toRetrievalOptions } from './chat.service.js';
 
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
@@ -35,9 +35,12 @@ export class ChatController {
         }
       });
 
+      const query = chatStreamQuerySchema.parse(req.query);
+
       const stream = this.chatService.stream({
-        message: req.query.message as string,
-        ...(req.query.sessionId ? { sessionId: req.query.sessionId as string } : {}),
+        message: query.message,
+        ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+        retrievalOptions: toRetrievalOptions(query),
         options: {
           signal: abortController.signal,
         },

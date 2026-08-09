@@ -1,66 +1,50 @@
 # Phase 1 — Web UI
 
-> Scope: `apps/web`. Goal: a Vite + React + TypeScript + Tailwind CSS +
-> shadcn/ui chat client wired to the `apps/api` chat endpoints, implementing
-> every Phase 1 UI goal from the roadmap: chat interface, streaming UI,
-> markdown rendering, conversation history, retrieved chunks, citations,
-> token usage, latency, and prompt preview.
+> Scope: `apps/web`. A Vite + React + TypeScript + Tailwind CSS + shadcn/ui
+> chat client wired to the `apps/api` chat endpoints, implementing every
+> Phase 1 UI goal from the roadmap: chat interface, streaming UI, markdown
+> rendering, conversation history, retrieved chunks, citations, token usage,
+> latency, and prompt preview.
 
-## 1. What existed before this phase
+## 1. Monorepo integration
 
-`apps/web` was an empty placeholder (`package.json` only, `name: "@atlas/web"`).
-There was no frontend at all — Phase 1's backend was only exercised via `curl`
-and the CLI.
-
-## 2. Monorepo fit
-
-- `pnpm-workspace.yaml` already globs `apps/*`, so `apps/web` is automatically
-  a workspace member.
+- `pnpm-workspace.yaml` globs `apps/*`, so `apps/web` is a workspace member.
 - Root `turbo.json`'s `dev` task is `persistent: true, cache: false`, and root
-  `package.json`'s `dev` script is `turbo run dev` — with `apps/web/package.json`
-  now having a `dev` script, `pnpm dev` at the repo root boots **both** the API
-  and the web app together.
-- Root `biome.json` already globs `**` (excluding `dist`/`coverage`/`.turbo`),
-  so `apps/web` is linted/formatted by the existing `pnpm lint` / `pnpm format`
-  — no new tooling config was needed. The repo uses Biome exclusively; the
-  ESLint-free `oxlint` scaffolding that `create-vite`'s `react-ts` template
-  generates today was removed to keep a single linter/formatter across the
-  monorepo.
+  `package.json`'s `dev` script is `turbo run dev` — `apps/web`'s own `dev`
+  script means `pnpm dev` at the repo root boots **both** the API and the web
+  app together.
+- Root `biome.json` globs `**` (excluding `dist`/`coverage`/`.turbo`), so
+  `apps/web` is linted/formatted by the existing `pnpm lint` / `pnpm format`.
+  Biome is the only linter/formatter in the monorepo — there is no ESLint or
+  oxlint configuration anywhere under `apps/web`.
 - Backend CORS is permissive (`app.use(cors())`), so the Vite dev server can
   call the API directly with no dev proxy. The API base URL is read from
   `VITE_API_URL` (default `http://localhost:3000`), so it's swappable for a
   deployed backend later.
 
-## 3. Scaffold
+## 2. Stack
 
-Generated with `pnpm create vite@latest . --template react-ts` (React 19,
-Vite 8, TypeScript 6), then customized:
+- **React 19 + Vite 8 + TypeScript 6.** `tsconfig.app.json` extends a shared
+  `packages/tsconfig/react.json` (extends `base.json`, adds
+  `lib: ["ES2023", "DOM", "DOM.Iterable"]`, `jsx: "react-jsx"`,
+  `moduleResolution: "Bundler"`). `tsconfig.node.json` (for `vite.config.ts`)
+  extends the shared `packages/tsconfig/node.json`, matching `apps/api`.
+- **`@/*` path alias** to `src/*`, resolved for both TypeScript
+  (`tsconfig.app.json` `paths`) and the bundler (`vite.config.ts`
+  `resolve.alias`) — the same `@/*` convention used in `apps/api`.
+- **Tailwind CSS v4** via `@tailwindcss/vite` (CSS-first configuration, no
+  separate PostCSS config), plus `@tailwindcss/typography` (`prose` classes
+  for rendered markdown) and `tw-animate-css` (the `animate-in`/`fade-in`/
+  `zoom-in` utility classes shadcn components use).
+- **shadcn/ui primitives** (`components.json`, `src/lib/utils.ts` `cn()`, CSS
+  theme variables in `src/index.css`), hand-authored following shadcn's
+  standard copy-in convention (Radix primitive + `class-variance-authority`
+  variants + `cn()`): `Button`, `Textarea`, `ScrollArea`, `Card`, `Badge`,
+  `Separator`, `Avatar`, `Collapsible`, `Tooltip`.
+- **`react-markdown` + `remark-gfm`** for markdown rendering, `lucide-react`
+  for icons.
 
-- Removed `oxlint` (config + dependency + script) — Biome-only tooling.
-- `tsconfig.app.json` extends a new shared `packages/tsconfig/react.json`
-  (mirrors the existing `packages/tsconfig/node.json` pattern: extends
-  `base.json`, adds `lib: ["ES2023", "DOM", "DOM.Iterable"]`,
-  `jsx: "react-jsx"`, `moduleResolution: "Bundler"`). `tsconfig.node.json`
-  (for `vite.config.ts`) extends the existing shared `node.json` for
-  consistency with `apps/api`.
-- `@/*` path alias to `src/*`, resolved for both TypeScript (`tsconfig.app.json`
-  `paths`) and the bundler (`vite.config.ts` `resolve.alias`) — matching the
-  `@/*` convention already used in `apps/api`.
-- Tailwind CSS v4 via `@tailwindcss/vite` (no separate PostCSS config file
-  needed) plus `@tailwindcss/typography` (for `prose` classes on rendered
-  markdown) and `tw-animate-css` (for the `animate-in`/`fade-in`/`zoom-in`
-  utility classes shadcn components use).
-- shadcn/ui primitives (`components.json`, `src/lib/utils.ts` `cn()`, CSS
-  theme variables in `src/index.css`) — **hand-authored** rather than run
-  through the `shadcn` CLI, following shadcn's standard copy-in convention
-  (Radix primitive + `class-variance-authority` variants + `cn()`), to avoid
-  depending on a network registry fetch + interactive prompts in this
-  environment. The primitives added: `Button`, `Textarea`, `ScrollArea`,
-  `Card`, `Badge`, `Separator`, `Avatar`, `Collapsible`, `Tooltip`.
-- `react-markdown` + `remark-gfm` for markdown rendering, `lucide-react` for
-  icons.
-
-## 4. Architecture
+## 3. Architecture
 
 ```mermaid
 flowchart TD
@@ -96,7 +80,7 @@ flowchart TD
   kept in sync by hand since there's no shared-types package wired up between
   the two apps yet.
 
-## 5. Roadmap item → implementation mapping
+## 4. Roadmap item → implementation mapping
 
 | Roadmap UI goal | Implementation |
 | --- | --- |
@@ -110,7 +94,7 @@ flowchart TD
 | Latency | Measured client-side in `useChat` (request start → `done` event for total latency, request start → first `token` event for time-to-first-token), shown as badges |
 | Prompt preview | `PromptPreviewPanel` — a disclosure reconstructing the exact numbered, source-tagged context block injected into the RAG prompt, built from the `citations` SSE event (which arrives before generation). This shows *what the model was grounded on*, not the full system-prompt instruction text |
 
-## 6. How to run
+## 5. How to run
 
 ```bash
 # Terminal 1 — backend (see phase-1-langchain-foundation.md for prerequisites)
@@ -126,7 +110,7 @@ pnpm dev
 The web app runs at `http://localhost:5173` and talks to the API at the URL
 in `apps/web/.env` (`VITE_API_URL`, defaults to `http://localhost:3000`).
 
-## 7. What's intentionally out of scope here
+## 6. What's intentionally out of scope here
 
 - **Multi-session / thread list UI** — only in-thread history persistence,
   per the roadmap's Phase 1 scope. A conversation switcher is a natural
@@ -139,7 +123,7 @@ in `apps/web/.env` (`VITE_API_URL`, defaults to `http://localhost:3000`).
 - **Optimistic retry / regenerate UI** — a failed stream currently just shows
   an inline error on that message.
 
-## 8. Things learned
+## 7. Implementation notes
 
 - The browser's native `EventSource` API is a strong fit whenever a backend
   already emits well-formed named SSE events over a plain `GET` — it handles

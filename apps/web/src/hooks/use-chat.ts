@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { streamChatMessage } from '@/lib/api';
-import type { ChatMessage } from '@/types/chat';
+import type { ChatMessage, RetrievalSettings } from '@/types/chat';
 
 const STORAGE_KEY = 'atlas.chat.v1';
 
@@ -54,7 +54,7 @@ export function useChat() {
   );
 
   const sendMessage = useCallback(
-    (content: string) => {
+    (content: string, retrievalSettings: RetrievalSettings) => {
       const trimmed = content.trim();
       if (!trimmed || isStreaming) return;
 
@@ -75,10 +75,13 @@ export function useChat() {
       const startedAt = performance.now();
       let firstTokenAt: number | undefined;
 
-      const close = streamChatMessage(trimmed, sessionId, {
+      const close = streamChatMessage(trimmed, sessionId, retrievalSettings, {
         onCitations: (chunk) => {
           if (chunk.sessionId) setSessionId(chunk.sessionId);
-          updateAssistantMessage(assistantId, { citations: chunk.citations });
+          updateAssistantMessage(assistantId, {
+            citations: chunk.citations,
+            retrieval: chunk.retrieval,
+          });
         },
         onToken: (chunk) => {
           if (firstTokenAt === undefined) {

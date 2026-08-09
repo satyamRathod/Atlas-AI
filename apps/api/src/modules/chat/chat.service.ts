@@ -11,10 +11,18 @@ import { concat } from '@langchain/core/utils/stream';
 
 import { env } from '@/config/env.js';
 import { ragPrompt } from '@/langchain/prompts/index.js';
-import type { RetrievedChunk, Retriever } from '@/langchain/retrievers/index.js';
+import type { RetrievalPipeline, RetrievalStrategy } from '@/langchain/retrieval/index.js';
+import type { RetrievedChunk } from '@/langchain/retrievers/index.js';
 
 import type { ChatRequestInput } from './chat.schema.js';
-import type { ChatCitation, ChatResponse, StreamChunk, StreamOptions } from './chat.types.js';
+import type {
+  ChatCitation,
+  ChatResponse,
+  RetrievalInfo,
+  RetrievalOptions,
+  StreamChunk,
+  StreamOptions,
+} from './chat.types.js';
 import type { InMemoryChatHistoryStore } from './infrastructure/in-memory-chat-history-store.js';
 
 interface RagChainInput {
@@ -29,7 +37,7 @@ export class ChatService {
 
   constructor(
     private readonly chatModel: BaseChatModel,
-    private readonly retriever: Retriever,
+    private readonly retrievalPipeline: RetrievalPipeline,
     private readonly historyStore: InMemoryChatHistoryStore,
   ) {
     this.chain = ragPrompt.pipe(this.chatModel);
@@ -38,9 +46,9 @@ export class ChatService {
   public async invoke(request: ChatRequestInput): Promise<ChatResponse> {
     const sessionId = request.sessionId ?? randomUUID();
 
-    const [history, chunks] = await Promise.all([
+    const [history, { chunks, retrieval }] = await Promise.all([
       this.historyStore.getMessages(sessionId),
-      this.retriever.retrieve(request.message),
+      this.retrieve(request.message, toRetrievalOptions(request)),
     ]);
 
     const response = await this.chain.invoke({
@@ -60,6 +68,7 @@ export class ChatService {
       reply: response.text,
       model: env.GROQ_MODEL,
       citations: this.toCitations(chunks),
+      retrieval,
       ...(response.usage_metadata ? { usage: response.usage_metadata } : {}),
     };
   }
@@ -67,22 +76,24 @@ export class ChatService {
   public async *stream({
     message,
     sessionId,
+    retrievalOptions,
     options,
   }: {
     message: string;
     sessionId?: string;
+    retrievalOptions?: RetrievalOptions;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
     const sid = sessionId ?? randomUUID();
 
-    const [history, chunks] = await Promise.all([
+    const [history, { chunks, retrieval }] = await Promise.all([
       this.historyStore.getMessages(sid),
-      this.retriever.retrieve(message),
+      this.retrieve(message, retrievalOptions ?? {}),
     ]);
 
     const citations = this.toCitations(chunks);
 
-    yield { type: 'citations', sessionId: sid, citations };
+    yield { type: 'citations', sessionId: sid, citations, retrieval };
 
     let fullText = '';
     let aggregated: AIMessage | undefined;
@@ -115,6 +126,18 @@ export class ChatService {
     };
   }
 
+  private async retrieve(
+    query: string,
+    options: RetrievalOptions,
+  ): Promise<{ chunks: RetrievedChunk[]; retrieval: RetrievalInfo }> {
+    const result = await this.retrievalPipeline.retrieve(query, options);
+
+    return {
+      chunks: result.chunks,
+      retrieval: { strategy: result.strategyUsed, stages: result.stages },
+    };
+  }
+
   private buildContext(chunks: RetrievedChunk[]): string {
     if (chunks.length === 0) {
       return 'No relevant context was found in the knowledge base.';
@@ -132,6 +155,37 @@ export class ChatService {
       ...(chunk.title ? { title: chunk.title } : {}),
       score: chunk.score,
       snippet: chunk.content.length > 200 ? `${chunk.content.slice(0, 200)}…` : chunk.content,
+      content: chunk.content,
+      ...(chunk.category ? { category: chunk.category } : {}),
+      ...(chunk.docType ? { docType: chunk.docType } : {}),
     }));
   }
+}
+
+interface RetrievalOptionsSource {
+  retrievalStrategy?: string | undefined;
+  filters?: RetrievalOptions['filter'] | undefined;
+  useMmr?: boolean | undefined;
+  useRerank?: boolean | undefined;
+  useCompression?: boolean | undefined;
+  useQueryExpansion?: boolean | undefined;
+}
+
+/**
+ * Maps the wire-level chat request fields (shared between the JSON body and
+ * the SSE query string) onto the retrieval pipeline's option shape.
+ */
+export function toRetrievalOptions(request: RetrievalOptionsSource): RetrievalOptions {
+  return {
+    ...(request.retrievalStrategy
+      ? { strategy: request.retrievalStrategy as RetrievalStrategy }
+      : {}),
+    ...(request.filters ? { filter: request.filters } : {}),
+    ...(request.useMmr !== undefined ? { useMmr: request.useMmr } : {}),
+    ...(request.useRerank !== undefined ? { useRerank: request.useRerank } : {}),
+    ...(request.useCompression !== undefined ? { useCompression: request.useCompression } : {}),
+    ...(request.useQueryExpansion !== undefined
+      ? { useQueryExpansion: request.useQueryExpansion }
+      : {}),
+  };
 }

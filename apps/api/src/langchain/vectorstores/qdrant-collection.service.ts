@@ -64,4 +64,21 @@ export class QdrantCollectionService {
   public async getCollection(collectionName: string) {
     return this.client.getCollection(collectionName);
   }
+
+  /**
+   * Creates a payload index on a metadata field so Qdrant can filter on it
+   * efficiently (metadata filtering / self-query). Optional for a corpus
+   * this small — Qdrant filters unindexed fields with a full scan — but
+   * this is what you'd do at scale, so it's included for completeness.
+   */
+  public async ensurePayloadIndex(
+    collectionName: string,
+    fieldName: string,
+    fieldSchema: 'keyword' | 'integer' | 'float' | 'bool' = 'keyword',
+  ): Promise<void> {
+    await this.client.createPayloadIndex(collectionName, {
+      field_name: fieldName,
+      field_schema: fieldSchema,
+    });
+  }
 }

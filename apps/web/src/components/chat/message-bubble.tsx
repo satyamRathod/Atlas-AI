@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PromptPreviewPanel } from '@/components/chat/prompt-preview-panel';
+import { RetrievalTimeline } from '@/components/chat/retrieval-timeline';
 import { citationAnchorId, SourcesPanel } from '@/components/chat/sources-panel';
 import { UsageBadges } from '@/components/chat/usage-badges';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -106,6 +107,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               onOpenChange={setSourcesOpen}
             />
             <PromptPreviewPanel citations={citations} />
+            <RetrievalTimeline retrieval={message.retrieval} />
             <UsageBadges
               usage={message.usage}
               model={message.model}

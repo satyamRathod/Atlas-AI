@@ -12,3 +12,8 @@ services:
 
     volumes:
       - ./docker/qdrant:/qdrant/storage
+
+# Redis is expected to run independently of this compose file (see
+# `apps/api/src/config/.env.example` for `REDIS_URL`) — it's a shared
+# instance also used by other local projects, not something this repo
+# provisions or owns.

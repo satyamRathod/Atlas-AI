@@ -1,17 +1,9 @@
 import type { QdrantVectorStore } from '@langchain/qdrant';
 
 import { env } from '@/config/env.js';
-
-export interface RetrievedChunk {
-  content: string;
-  source: string;
-  title?: string;
-  score: number;
-}
-
-export interface Retriever {
-  retrieve(query: string): Promise<RetrievedChunk[]>;
-}
+import { toQdrantFilter } from '@/langchain/retrieval/metadata-filter.js';
+import type { RetrievedChunk, RetrieveOptions, Retriever } from './retriever.types.js';
+import { toRetrievedChunk, withScore } from './to-retrieved-chunk.js';
 
 /**
  * Retrieval wrapper around `QdrantVectorStore.similaritySearchWithScore`.
@@ -23,17 +15,16 @@ export interface Retriever {
  */
 export function createRetriever(vectorStore: QdrantVectorStore): Retriever {
   return {
-    async retrieve(query: string): Promise<RetrievedChunk[]> {
-      const results = await vectorStore.similaritySearchWithScore(query, env.RETRIEVAL_TOP_K);
+    async retrieve(query: string, options?: RetrieveOptions): Promise<RetrievedChunk[]> {
+      const results = await vectorStore.similaritySearchWithScore(
+        query,
+        env.RETRIEVAL_TOP_K,
+        toQdrantFilter(options?.filter),
+      );
 
       return results
         .filter(([, score]) => score >= env.RETRIEVAL_SCORE_THRESHOLD)
-        .map(([document, score]) => ({
-          content: document.pageContent,
-          source: String(document.metadata.source ?? 'unknown'),
-          ...(document.metadata.title ? { title: String(document.metadata.title) } : {}),
-          score,
-        }));
+        .map(([document, score]) => toRetrievedChunk(withScore(document, score)));
     },
   };
 }

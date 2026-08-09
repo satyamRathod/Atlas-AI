@@ -1,31 +1,14 @@
 # Phase 1 — LangChain Foundation
 
-> Scope: `apps/api`. Goal: replace ad-hoc, hand-rolled AI infrastructure with
-> native LangChain (JS v1) primitives, and ship a working end-to-end RAG chat
-> flow (Groq + Qdrant + local embeddings) with citations.
+> Scope: `apps/api`. A LangChain (JS v1) RAG chat backend — Groq + Qdrant +
+> local embeddings — with citations, SSE streaming, conversation history, and
+> a CLI for knowledge indexing.
 
-## 1. What existed before this phase
-
-Before this phase, `apps/api` had two AI stacks living side by side:
-
-1. A **custom, hand-rolled stack** (`src/ai/**`) with its own `LLMProvider`
-   interface, `OpenAIProvider`, `SemanticRetriever`, a custom
-   `QdrantVectorStore` wrapper, `TokenBudgetManager`, `ContextWindowTrimmer`,
-   `PromptBuilder`, and `ConversationSummarizer`. This is what actually
-   powered the `/api/v1/chat` routes.
-2. A **partially-started LangChain stack** (`src/langchain/**`) that only
-   powered the knowledge-indexing CLI, and was itself broken — the chat model
-   factory was an empty file, and the CLI's command registry imported files
-   that had already been deleted.
-
-This phase removes stack (1) entirely and finishes stack (2), so LangChain is
-now the *only* AI infrastructure in the codebase.
-
-## 2. Concepts covered in this phase
+## 1. Concepts covered in this phase
 
 | Concept | Where it's used |
 | --- | --- |
-| **Chat Models** | `langchain/chat/create-chat-model.ts` — `ChatGroq` from `@langchain/groq` |
+| **Chat Models** | `langchain/chat/create-chat-model.ts` — provider-dispatched `BaseChatModel` (`ChatGroq` from `@langchain/groq` today) |
 | **Messages** | `HumanMessage` / `AIMessage` / `AIMessageChunk` from `@langchain/core/messages` |
 | **Prompt Templates** | `langchain/prompts/rag-prompt.ts` — `ChatPromptTemplate` + `MessagesPlaceholder` |
 | **LCEL** | `chat.service.ts` — `ragPrompt.pipe(chatModel)` composes a `Runnable` chain |
@@ -36,9 +19,9 @@ now the *only* AI infrastructure in the codebase.
 | **Retrievers** | `langchain/retrievers/create-retriever.ts` (scored) and `vectorStore.asRetriever()` (native, in the CLI) |
 | **Chat History** | `modules/chat/infrastructure/in-memory-chat-history-store.ts` — `InMemoryChatMessageHistory` |
 
-## 3. Architecture
+## 2. Architecture
 
-### 3.1 Chat / RAG request flow
+### 2.1 Chat / RAG request flow
 
 ```mermaid
 flowchart LR
@@ -46,7 +29,7 @@ flowchart LR
     Controller --> Service[ChatService]
     Service --> History[InMemoryChatHistoryStore]
     Service --> Retriever["Retriever (Qdrant similaritySearchWithScore)"]
-    Service --> Chain["ragPrompt.pipe(ChatGroq) LCEL chain"]
+    Service --> Chain["ragPrompt.pipe(ChatModel) LCEL chain"]
     Retriever --> Qdrant[(Qdrant)]
     Chain --> Groq[["Groq (openai/gpt-oss-120b)"]]
     Service -->|"citations + token stream + usage"| Controller
@@ -65,23 +48,59 @@ Two reasons:
 The LCEL composition (`ragPrompt.pipe(chatModel)`) is still real and is what
 actually calls the model for both `invoke()` (JSON) and `stream()` (SSE).
 
-### 3.2 Knowledge indexing pipeline
+### 2.2 Knowledge indexing pipeline
+
+Triggered by `pnpm --filter @atlas/api ai knowledge:index` (see
+`cli/commands/knowledge-index.command.ts`):
 
 ```mermaid
-flowchart LR
-    MD["knowledge/*.md"] --> Loader[DirectoryLoader + TextLoader]
-    Loader --> Meta["metadata enrichment (title, relative source)"]
-    Meta --> Splitter[RecursiveCharacterTextSplitter]
-    Splitter --> Embeddings["Transformers.js (local embeddings)"]
-    Embeddings --> Qdrant[(Qdrant collection)]
+flowchart TD
+    CLI["pnpm ai knowledge:index [--reset]"] --> Cmd[KnowledgeIndexCommand]
+
+    Cmd --> Load["loadKnowledgeDocuments()"]
+    Load --> Loader["DirectoryLoader + TextLoader<br/>reads knowledge/*.md"]
+    Loader --> Enrich["enrichMetadata()<br/>derives title, relativizes source"]
+
+    Cmd --> Embed["createEmbeddings()<br/>TransformersEmbeddings (local model)"]
+
+    Cmd --> Reset{"--reset flag?"}
+    Reset -->|yes| Recreate["QdrantCollectionService<br/>.recreateCollection() — drop + create"]
+    Reset -->|no| Ensure["QdrantCollectionService<br/>.ensureCollection() — create if missing"]
+
+    Embed --> Store["createQdrantVectorStore()<br/>QdrantVectorStore.fromExistingCollection"]
+    Recreate --> Store
+    Ensure --> Store
+
+    Enrich --> Indexer["KnowledgeIndexer.index(documents)"]
+    Store --> Indexer
+
+    Indexer --> Split["splitter.splitDocuments()<br/>RecursiveCharacterTextSplitter"]
+    Split --> Batch["batch chunks by INDEX_BATCH_SIZE"]
+    Batch --> Add["vectorStore.addDocuments(batch)<br/>embeds + upserts each batch"]
+    Add --> Qdrant[(Qdrant collection)]
 ```
 
-Documents are enriched right after loading: the `source` metadata (an
-absolute path by default) is rewritten relative to `KNOWLEDGE_DIRECTORY`, and
-a `title` is derived from the first `# Heading` in the file (falling back to
-the filename). Both fields show up later in citations.
+Step by step:
 
-## 4. API reference
+1. **Load** — `loadKnowledgeDocuments()` (`langchain/loaders/create-knowledge-loader.ts`)
+   uses a `DirectoryLoader` + `TextLoader` to read every `.md` file under
+   `KNOWLEDGE_DIRECTORY`, then `enrichMetadata()` rewrites each document's
+   `source` to be relative to that directory and derives a `title` from its
+   first `# Heading` (falling back to the filename). Both fields later show
+   up in citations.
+2. **Prepare the collection** — a `QdrantCollectionService` either recreates
+   the collection from scratch (`--reset`, drops + re-creates) or ensures it
+   exists (default, no-op if already present), sized to the active
+   embedding model's dimensions.
+3. **Split** — `KnowledgeIndexer.index()` (`langchain/indexing/knowledge-indexer.ts`)
+   runs every loaded document through a `RecursiveCharacterTextSplitter`
+   (`TEXT_CHUNK_SIZE` / `TEXT_CHUNK_OVERLAP`) to produce chunks.
+4. **Embed + upsert** — chunks are processed in batches of `INDEX_BATCH_SIZE`;
+   each `vectorStore.addDocuments(batch)` call embeds the batch with the
+   local `TransformersEmbeddings` model and upserts the resulting vectors +
+   payload into the Qdrant collection.
+
+## 3. API reference
 
 ### `POST /api/v1/chat`
 
@@ -122,7 +141,7 @@ Server-Sent Events, in order:
 > in our chain; full usage/cost accounting is formalized in the
 > Observability phase.
 
-## 5. How to run
+## 4. How to run
 
 ```bash
 docker compose up -d qdrant
@@ -141,39 +160,20 @@ pnpm --filter @atlas/api dev
 Requires a real `GROQ_API_KEY` in `apps/api/.env` (see
 `src/config/.env.example`).
 
-## 6. Old → New mapping (what was removed)
-
-| Old (`src/ai/**`, deleted) | New |
-| --- | --- |
-| `LLMProvider` / `OpenAIProvider` | `ChatGroq` (`@langchain/groq`) |
-| `PromptBuilder` | `ChatPromptTemplate` (`langchain/prompts/rag-prompt.ts`) |
-| `TransformersEmbeddingProvider` / `ProviderEmbeddingService` | `TransformersEmbeddings` implementing `Embeddings` |
-| Custom `QdrantVectorStore` wrapper | `@langchain/qdrant`'s `QdrantVectorStore` |
-| `SemanticRetriever` | `langchain/retrievers/create-retriever.ts` + native `vectorStore.asRetriever()` |
-| `ChatSession` / `InMemoryConversationStore` | `InMemoryChatMessageHistory` (`@langchain/core/chat_history`) |
-| `ContextWindowTrimmer` / `TokenBudgetManager` | Deferred to Phase 3 (Memory) |
-| `ConversationSummarizer` | Deferred to Phase 3 (Memory) |
-| `GenerateRequest` / `GenerateResponse` | `BaseMessage[]` / `AIMessageChunk` |
-
-The generic OpenAI-compatible provider path was also dropped: the chat model
-is now Groq-only via `@langchain/groq`, and the `openai` / `gray-matter` npm
-packages were removed since nothing in the new stack depends on them
-directly.
-
-## 7. What's intentionally out of scope here
+## 5. What's intentionally out of scope here
 
 - **Hybrid search, BM25, RRF, MMR, cross-encoder reranking** → Phase 2 (Advanced RAG)
 - **Token budgeting, context trimming, conversation summarization, long-term/semantic memory** → Phase 3 (Memory). Chat history in this phase is in-memory and unbounded.
 - **Structured output, JSON mode, few-shot prompting** → Phase 4 (Prompt Engineering)
 - **Cost tracking, tracing, prompt inspection dashboards** → later Observability phase
 
-## 8. Adding another chat model provider
+## 6. Adding another chat model provider
 
 `createChatModel()` (`langchain/chat/create-chat-model.ts`) is a small
-dispatcher keyed by the `CHAT_PROVIDER` env var, not a hardcoded `ChatGroq`.
-Every LangChain chat model integration implements the same `BaseChatModel`
-contract, and `ChatService` only ever depends on that base type — so it has
-zero knowledge of which provider is active. Adding OpenAI or Gemini later is:
+dispatcher keyed by the `CHAT_PROVIDER` env var. Every LangChain chat model
+integration implements the same `BaseChatModel` contract, and `ChatService`
+only ever depends on that base type — so it has zero knowledge of which
+provider is active. Adding OpenAI or Gemini is:
 
 1. `pnpm --filter @atlas/api add @langchain/openai` (or `@langchain/google-genai`)
 2. Add the new value to the `CHAT_PROVIDER` enum in `config/env.ts`, plus that
@@ -185,7 +185,7 @@ No changes to `ChatService`, the prompt, the retriever, or the routes are
 needed. Only Groq is implemented today (free tier, fast inference); this is
 a deliberate scope decision, not a limitation of the design.
 
-## 9. Things learned
+## 7. Implementation notes
 
 - LangChain's `BaseMessage.text` getter normalizes multi-part content into a
   plain string, which is what makes `chain.invoke(...).text` and streamed

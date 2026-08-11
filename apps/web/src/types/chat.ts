@@ -54,12 +54,40 @@ export interface MetadataFilter {
   [key: string]: MetadataFilterValue;
 }
 
+/** What the token-budget math decided for this turn, plus what trimming actually used. Mirrors `TokenBudgetInfo` in apps/api/src/langchain/memory/memory.types.ts. */
+export interface TokenBudgetInfo {
+  maxContextTokens: number;
+  reservedOutputTokens: number;
+  promptOverheadTokens: number;
+  historyBudgetTokens: number;
+  historyTokensUsed: number;
+}
+
+/** A semantic-memory fact surfaced for the current turn's question. */
+export interface SemanticFact {
+  text: string;
+  score: number;
+}
+
+/** Mirrors `MemoryInfo` in apps/api/src/langchain/memory/memory.types.ts — powers the memory inspector UI. */
+export interface MemoryInfo {
+  historyMessageCount: number;
+  historyTokens: number;
+  /** `true` only on the turn where rolling summarization actually fired. */
+  summarized: boolean;
+  /** Present whenever a summary exists (not just on turns that just updated it). */
+  summary?: string;
+  tokenBudget: TokenBudgetInfo;
+  semanticFacts: readonly SemanticFact[];
+}
+
 export interface ChatResponse {
   sessionId: string;
   reply: string;
   model: string;
   citations: readonly ChatCitation[];
   retrieval: RetrievalInfo;
+  memory: MemoryInfo;
   usage?: ChatUsage;
 }
 
@@ -71,6 +99,8 @@ export interface StreamChunk {
   text?: string;
   citations?: readonly ChatCitation[];
   retrieval?: RetrievalInfo;
+  /** Only ever attached to the `done` event — memory numbers aren't final until the turn completes. */
+  memory?: MemoryInfo;
   model?: string;
   usage?: ChatUsage;
   message?: string;
@@ -99,6 +129,7 @@ export interface ChatMessage {
   /** Present once the response has started streaming/arrived. */
   citations?: readonly ChatCitation[];
   retrieval?: RetrievalInfo;
+  memory?: MemoryInfo;
   usage?: ChatUsage;
   model?: string;
   /** Wall-clock time from request start to the `done` event, in ms. */

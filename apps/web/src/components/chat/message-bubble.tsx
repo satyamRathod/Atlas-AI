@@ -2,6 +2,7 @@ import { AlertTriangle, Bot, User } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MemoryPanel } from '@/components/chat/memory-panel';
 import { PromptPreviewPanel } from '@/components/chat/prompt-preview-panel';
 import { RetrievalTimeline } from '@/components/chat/retrieval-timeline';
 import { citationAnchorId, SourcesPanel } from '@/components/chat/sources-panel';
@@ -98,24 +99,29 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </p>
         )}
 
-        {!isUser && (citations.length > 0 || message.usage || message.latencyMs !== undefined) && (
-          <div className="flex w-full flex-col gap-2 px-1">
-            <SourcesPanel
-              citations={citations}
-              messageId={message.id}
-              open={sourcesOpen}
-              onOpenChange={setSourcesOpen}
-            />
-            <PromptPreviewPanel citations={citations} />
-            <RetrievalTimeline retrieval={message.retrieval} />
-            <UsageBadges
-              usage={message.usage}
-              model={message.model}
-              latencyMs={message.latencyMs}
-              firstTokenMs={message.firstTokenMs}
-            />
-          </div>
-        )}
+        {!isUser &&
+          (citations.length > 0 ||
+            message.usage ||
+            message.memory ||
+            message.latencyMs !== undefined) && (
+            <div className="flex w-full flex-col gap-2 px-1">
+              <SourcesPanel
+                citations={citations}
+                messageId={message.id}
+                open={sourcesOpen}
+                onOpenChange={setSourcesOpen}
+              />
+              <PromptPreviewPanel citations={citations} />
+              <RetrievalTimeline retrieval={message.retrieval} />
+              <MemoryPanel memory={message.memory} />
+              <UsageBadges
+                usage={message.usage}
+                model={message.model}
+                latencyMs={message.latencyMs}
+                firstTokenMs={message.firstTokenMs}
+              />
+            </div>
+          )}
       </div>
     </div>
   );

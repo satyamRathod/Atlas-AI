@@ -93,6 +93,32 @@ const envSchema = z.object({
   PARENT_CHUNK_OVERLAP: z.coerce.number().int().min(0).default(200),
   CHILD_CHUNK_SIZE: z.coerce.number().int().min(1).default(400),
   CHILD_CHUNK_OVERLAP: z.coerce.number().int().min(0).default(50),
+
+  // Memory (Phase 3) — conversation persistence (Redis), token budgeting,
+  // context trimming, and rolling summarization. See
+  // docs/phases/phase-3-memory.md.
+  MEMORY_HISTORY_REDIS_PREFIX: z.string().default('atlas:chat:messages'),
+  MEMORY_SUMMARY_REDIS_PREFIX: z.string().default('atlas:chat:summary'),
+  MEMORY_HISTORY_TTL_SECONDS: z.coerce.number().int().min(1).default(604800), // 7 days, sliding
+
+  // Token budgeting — defaults match openai/gpt-oss-120b's real context
+  // window / max completion length on Groq. There's no per-model lookup
+  // table, so override these if GROQ_MODEL changes to a smaller-context model.
+  MEMORY_MAX_CONTEXT_TOKENS: z.coerce.number().int().min(1).default(131072),
+  MEMORY_RESERVED_OUTPUT_TOKENS: z.coerce.number().int().min(1).default(8192),
+
+  // Conversation summarization — deliberately low trigger so the mechanism
+  // is observable in a short demo conversation, not just unreachable code
+  // (see docs/phases/phase-3-memory.md §3's callout).
+  MEMORY_RECENT_MESSAGES_KEPT: z.coerce.number().int().min(1).default(6),
+  MEMORY_SUMMARY_TRIGGER_TOKENS: z.coerce.number().int().min(1).default(2000),
+
+  // Semantic / vector memory — off by default (adds one LLM call per turn
+  // for fact extraction, plus one retrieval call per turn when enabled)
+  MEMORY_SEMANTIC_ENABLED: booleanFlag(false),
+  MEMORY_SEMANTIC_COLLECTION: z.string().default('atlas_semantic_memory'),
+  MEMORY_SEMANTIC_TOP_K: z.coerce.number().int().min(1).default(3),
+  MEMORY_SEMANTIC_SCORE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
 });
 
 //validate environment variables

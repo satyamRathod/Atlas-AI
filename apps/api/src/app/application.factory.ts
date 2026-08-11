@@ -1,5 +1,8 @@
+import { env } from '@/config/env.js';
+import { createRedisClient } from '@/infrastructure/redis/index.js';
 import { createChatModel } from '@/langchain/chat/index.js';
 import { createEmbeddings } from '@/langchain/embeddings/index.js';
+import { createSemanticMemoryStore, SemanticMemoryStore } from '@/langchain/memory/index.js';
 import { createAdvancedRetriever } from '@/langchain/retrieval/index.js';
 import {
   connectParentDocumentRetriever,
@@ -17,7 +20,7 @@ import { createApp } from '../http/app.js';
 import { createHttpServer } from '../http/server.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
-import { InMemoryChatHistoryStore } from '../modules/chat/infrastructure/in-memory-chat-history-store.js';
+import { RedisChatMemoryStore } from '../modules/chat/infrastructure/redis-chat-memory-store.js';
 import type { Application } from './application.js';
 
 export async function buildApplication(): Promise<Application> {
@@ -72,12 +75,33 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 3 — Memory
+   |--------------------------------------------------------------------------
+   | Conversation history/summaries persist to the same Redis instance
+   | Phase 2 uses for BM25/parent-document (§2, §5). Semantic memory (§7) is
+   | off by default (MEMORY_SEMANTIC_ENABLED) since it adds an LLM call per
+   | turn — see docs/phases/phase-3-memory.md.
+   */
+
+  const redisClient = createRedisClient();
+  const historyStore = new RedisChatMemoryStore(redisClient);
+
+  const semanticMemoryStore = env.MEMORY_SEMANTIC_ENABLED
+    ? new SemanticMemoryStore(await createSemanticMemoryStore({ embeddings }))
+    : undefined;
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
 
-  const historyStore = new InMemoryChatHistoryStore();
-  const chatService = new ChatService(chatModel, retrievalPipeline, historyStore);
+  const chatService = new ChatService(
+    chatModel,
+    retrievalPipeline,
+    historyStore,
+    semanticMemoryStore,
+  );
 
   /*
    |--------------------------------------------------------------------------

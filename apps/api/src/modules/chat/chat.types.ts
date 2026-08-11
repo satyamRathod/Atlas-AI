@@ -1,5 +1,6 @@
 import type { UsageMetadata } from '@langchain/core/messages';
 
+import type { MemoryInfo } from '@/langchain/memory/index.js';
 import type { AdvancedRetrieveOptions, RetrievalStageTiming } from '@/langchain/retrieval/index.js';
 
 export interface StreamOptions {
@@ -40,6 +41,7 @@ export interface ChatResponse {
   model: string;
   citations: readonly ChatCitation[];
   retrieval: RetrievalInfo;
+  memory: MemoryInfo;
   usage?: UsageMetadata;
 }
 
@@ -51,6 +53,11 @@ export interface StreamChunk {
   text?: string;
   citations?: readonly ChatCitation[];
   retrieval?: RetrievalInfo;
+  /**
+   * Only ever attached to the `done` event — token/budget/summary numbers
+   * aren't final until the turn actually completes (Phase 3 §8).
+   */
+  memory?: MemoryInfo;
   model?: string;
   usage?: UsageMetadata;
   message?: string;

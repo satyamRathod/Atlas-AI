@@ -98,6 +98,7 @@ export function useChat() {
             isStreaming: false,
             usage: chunk.usage,
             model: chunk.model,
+            memory: chunk.memory,
             latencyMs: performance.now() - startedAt,
           });
           setIsStreaming(false);

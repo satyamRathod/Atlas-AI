@@ -83,6 +83,9 @@ importers:
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0
+      js-tiktoken:
+        specifier: ^1.0.21
+        version: 1.0.21
       langchain:
         specifier: ^1.5.4
         version: 1.5.4(@langchain/core@1.2.4(openai@6.46.0(ws@8.21.2)(zod@4.4.3))(ws@8.21.2))(openai@6.46.0(ws@8.21.2)(zod@4.4.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(ws@8.21.2)

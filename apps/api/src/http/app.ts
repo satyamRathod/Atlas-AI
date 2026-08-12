@@ -6,14 +6,17 @@ import { httpLogger } from '../infrastructure/logger/index.js';
 import type { ChatController } from '../modules/chat/chat.controller.js';
 import { createChatRouter } from '../modules/chat/index.js';
 import healthRouter from '../modules/health/health.route.js';
+import type { PromptController } from '../modules/prompts/prompt.controller.js';
+import { createPromptRouter } from '../modules/prompts/prompt.route.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { notFoundHandler } from './middleware/not-found.js';
 
 interface AppDependencies {
   chatController: ChatController;
+  promptController: PromptController;
 }
 
-export function createApp({ chatController }: AppDependencies): Express {
+export function createApp({ chatController, promptController }: AppDependencies): Express {
   const app: Express = express();
 
   app.disable('x-powered-by');
@@ -41,6 +44,7 @@ export function createApp({ chatController }: AppDependencies): Express {
   // Routes
   app.use('/health', healthRouter);
   app.use('/api/v1/chat', createChatRouter(chatController));
+  app.use('/api/v1/prompts', createPromptRouter(promptController));
 
   // Error handling
   app.use(notFoundHandler);

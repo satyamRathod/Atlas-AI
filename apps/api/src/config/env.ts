@@ -119,6 +119,26 @@ const envSchema = z.object({
   MEMORY_SEMANTIC_COLLECTION: z.string().default('atlas_semantic_memory'),
   MEMORY_SEMANTIC_TOP_K: z.coerce.number().int().min(1).default(3),
   MEMORY_SEMANTIC_SCORE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
+
+  // Prompt Engineering (Phase 4) — versioned prompt registry (Redis, same
+  // instance as Memory above), dynamic prompt selection, few-shot, structured
+  // output, and guardrails. See docs/phases/phase-4-prompt-engineering.md.
+  PROMPT_REDIS_PREFIX: z.string().default('atlas:prompts:'),
+  PROMPT_DEFAULT_TEMPLATE_ID: z.string().default('default'),
+
+  // Guardrails — "block" short-circuits before the LLM call when an input
+  // check fails; "observe" always generates normally and only reports
+  // results. Output-side checks are always observe-only (see §5).
+  PROMPT_GUARDRAILS_MODE: z.enum(['block', 'observe']).default('block'),
+  PROMPT_GUARDRAILS_BLOCKED_TERMS: z
+    .string()
+    .default('kill someone,make a bomb,how to hack')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((term) => term.trim().toLowerCase())
+        .filter(Boolean),
+    ),
 });
 
 //validate environment variables

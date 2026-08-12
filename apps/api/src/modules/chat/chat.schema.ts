@@ -20,6 +20,14 @@ export const chatRequestSchema = z.object({
   useRerank: z.boolean().optional(),
   useCompression: z.boolean().optional(),
   useQueryExpansion: z.boolean().optional(),
+  // Prompt Engineering (Phase 4) — all optional, defaulting to the
+  // server-configured default template/latest version/no few-shot/prose
+  // reply when omitted, same "old shape keeps working" convention as the
+  // retrieval overrides above.
+  promptTemplateId: z.string().trim().min(1).max(64).optional(),
+  promptVersion: z.coerce.number().int().min(1).optional(),
+  useFewShot: z.boolean().optional(),
+  structuredOutput: z.boolean().optional(),
 });
 
 export type ChatRequestInput = z.infer<typeof chatRequestSchema>;
@@ -55,6 +63,10 @@ export const chatStreamQuerySchema = z.object({
   useRerank: booleanQueryParam,
   useCompression: booleanQueryParam,
   useQueryExpansion: booleanQueryParam,
+  promptTemplateId: z.string().trim().min(1).max(64).optional(),
+  promptVersion: z.coerce.number().int().min(1).optional(),
+  useFewShot: booleanQueryParam,
+  structuredOutput: booleanQueryParam,
 });
 
 export type ChatStreamQueryInput = z.infer<typeof chatStreamQuerySchema>;

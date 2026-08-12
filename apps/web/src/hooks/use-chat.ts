@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { streamChatMessage } from '@/lib/api';
-import type { ChatMessage, RetrievalSettings } from '@/types/chat';
+import type { ChatMessage, PromptSettings, RetrievalSettings } from '@/types/chat';
 
 const STORAGE_KEY = 'atlas.chat.v1';
 
@@ -54,7 +54,7 @@ export function useChat() {
   );
 
   const sendMessage = useCallback(
-    (content: string, retrievalSettings: RetrievalSettings) => {
+    (content: string, retrievalSettings: RetrievalSettings, promptSettings?: PromptSettings) => {
       const trimmed = content.trim();
       if (!trimmed || isStreaming) return;
 
@@ -75,42 +75,51 @@ export function useChat() {
       const startedAt = performance.now();
       let firstTokenAt: number | undefined;
 
-      const close = streamChatMessage(trimmed, sessionId, retrievalSettings, {
-        onCitations: (chunk) => {
-          if (chunk.sessionId) setSessionId(chunk.sessionId);
-          updateAssistantMessage(assistantId, {
-            citations: chunk.citations,
-            retrieval: chunk.retrieval,
-          });
+      const close = streamChatMessage(
+        trimmed,
+        sessionId,
+        retrievalSettings,
+        {
+          onCitations: (chunk) => {
+            if (chunk.sessionId) setSessionId(chunk.sessionId);
+            updateAssistantMessage(assistantId, {
+              citations: chunk.citations,
+              retrieval: chunk.retrieval,
+            });
+          },
+          onToken: (chunk) => {
+            if (firstTokenAt === undefined) {
+              firstTokenAt = performance.now();
+            }
+            const firstTokenMs = firstTokenAt - startedAt;
+            updateAssistantMessage(assistantId, (msg) => ({
+              content: msg.content + (chunk.text ?? ''),
+              firstTokenMs,
+            }));
+          },
+          onDone: (chunk) => {
+            updateAssistantMessage(assistantId, {
+              isStreaming: false,
+              usage: chunk.usage,
+              model: chunk.model,
+              memory: chunk.memory,
+              promptInfo: chunk.promptInfo,
+              guardrails: chunk.guardrails,
+              structuredOutput: chunk.structuredOutput,
+              latencyMs: performance.now() - startedAt,
+            });
+            setIsStreaming(false);
+          },
+          onError: (chunk) => {
+            updateAssistantMessage(assistantId, {
+              isStreaming: false,
+              error: 'message' in chunk ? chunk.message : 'Something went wrong.',
+            });
+            setIsStreaming(false);
+          },
         },
-        onToken: (chunk) => {
-          if (firstTokenAt === undefined) {
-            firstTokenAt = performance.now();
-          }
-          const firstTokenMs = firstTokenAt - startedAt;
-          updateAssistantMessage(assistantId, (msg) => ({
-            content: msg.content + (chunk.text ?? ''),
-            firstTokenMs,
-          }));
-        },
-        onDone: (chunk) => {
-          updateAssistantMessage(assistantId, {
-            isStreaming: false,
-            usage: chunk.usage,
-            model: chunk.model,
-            memory: chunk.memory,
-            latencyMs: performance.now() - startedAt,
-          });
-          setIsStreaming(false);
-        },
-        onError: (chunk) => {
-          updateAssistantMessage(assistantId, {
-            isStreaming: false,
-            error: 'message' in chunk ? chunk.message : 'Something went wrong.',
-          });
-          setIsStreaming(false);
-        },
-      });
+        promptSettings,
+      );
 
       closeStreamRef.current = close;
     },

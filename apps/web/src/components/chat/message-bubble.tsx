@@ -2,11 +2,14 @@ import { AlertTriangle, Bot, User } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { GuardrailsPanel } from '@/components/chat/guardrails-panel';
 import { MemoryPanel } from '@/components/chat/memory-panel';
 import { PromptPreviewPanel } from '@/components/chat/prompt-preview-panel';
 import { RetrievalTimeline } from '@/components/chat/retrieval-timeline';
 import { citationAnchorId, SourcesPanel } from '@/components/chat/sources-panel';
+import { StructuredOutputViewer } from '@/components/chat/structured-output-viewer';
 import { UsageBadges } from '@/components/chat/usage-badges';
+import { VariableInspectorPanel } from '@/components/chat/variable-inspector-panel';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import type { ChatMessage } from '@/types/chat';
@@ -103,6 +106,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           (citations.length > 0 ||
             message.usage ||
             message.memory ||
+            message.promptInfo ||
             message.latencyMs !== undefined) && (
             <div className="flex w-full flex-col gap-2 px-1">
               <SourcesPanel
@@ -114,6 +118,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               <PromptPreviewPanel citations={citations} />
               <RetrievalTimeline retrieval={message.retrieval} />
               <MemoryPanel memory={message.memory} />
+              <VariableInspectorPanel promptInfo={message.promptInfo} />
+              <StructuredOutputViewer structuredOutput={message.structuredOutput} />
+              <GuardrailsPanel guardrails={message.guardrails} />
               <UsageBadges
                 usage={message.usage}
                 model={message.model}

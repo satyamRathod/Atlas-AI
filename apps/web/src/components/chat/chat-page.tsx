@@ -1,18 +1,29 @@
-import { RotateCcw, Settings2, Sparkles } from 'lucide-react';
+import { Columns2, RotateCcw, Settings2, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 import { ChatInput } from '@/components/chat/chat-input';
 import { MessageList } from '@/components/chat/message-list';
+import { PromptComparisonDialog } from '@/components/chat/prompt-comparison-dialog';
+import { PromptSettingsBar } from '@/components/chat/prompt-settings-bar';
 import { RetrievalSettingsBar } from '@/components/chat/retrieval-settings-bar';
 import { Button } from '@/components/ui/button';
 import { useChat } from '@/hooks/use-chat';
+import { usePromptSettings } from '@/hooks/use-prompt-settings';
 import { useRetrievalSettings } from '@/hooks/use-retrieval-settings';
 import { cn } from '@/lib/utils';
+
+type SettingsPanel = 'none' | 'retrieval' | 'prompt';
 
 export function ChatPage() {
   const { messages, isStreaming, sendMessage, resetConversation } = useChat();
   const { settings, updateSettings, resetSettings } = useRetrievalSettings();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const promptSettings = usePromptSettings();
+  const [openPanel, setOpenPanel] = useState<SettingsPanel>('none');
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  const togglePanel = (panel: SettingsPanel) => {
+    setOpenPanel((prev) => (prev === panel ? 'none' : panel));
+  };
 
   return (
     <div className="bg-background flex h-dvh flex-col">
@@ -23,13 +34,33 @@ export function ChatPage() {
         </div>
         <div className="flex items-center gap-1.5">
           <Button
-            variant={settingsOpen ? 'secondary' : 'ghost'}
+            variant={openPanel === 'retrieval' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setSettingsOpen((prev) => !prev)}
+            onClick={() => togglePanel('retrieval')}
             className="gap-1.5"
           >
-            <Settings2 className={cn('size-3.5', settingsOpen && 'text-primary')} />
+            <Settings2 className={cn('size-3.5', openPanel === 'retrieval' && 'text-primary')} />
             Retrieval
+          </Button>
+          <Button
+            variant={openPanel === 'prompt' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => togglePanel('prompt')}
+            className="gap-1.5"
+          >
+            <SlidersHorizontal
+              className={cn('size-3.5', openPanel === 'prompt' && 'text-primary')}
+            />
+            Prompt
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCompareOpen(true)}
+            className="gap-1.5"
+          >
+            <Columns2 className="size-3.5" />
+            Compare
           </Button>
           <Button variant="ghost" size="sm" onClick={resetConversation} className="gap-1.5">
             <RotateCcw className="size-3.5" />
@@ -38,7 +69,7 @@ export function ChatPage() {
         </div>
       </header>
 
-      {settingsOpen && (
+      {openPanel === 'retrieval' && (
         <RetrievalSettingsBar
           settings={settings}
           onUpdate={updateSettings}
@@ -46,11 +77,24 @@ export function ChatPage() {
         />
       )}
 
+      {openPanel === 'prompt' && (
+        <PromptSettingsBar
+          settings={promptSettings.settings}
+          onUpdate={promptSettings.updateSettings}
+          onReset={promptSettings.resetSettings}
+        />
+      )}
+
       <MessageList messages={messages} />
 
       <div className="mx-auto w-full max-w-3xl px-4 pb-6">
-        <ChatInput onSend={(content) => sendMessage(content, settings)} disabled={isStreaming} />
+        <ChatInput
+          onSend={(content) => sendMessage(content, settings, promptSettings.settings)}
+          disabled={isStreaming}
+        />
       </div>
+
+      <PromptComparisonDialog open={compareOpen} onOpenChange={setCompareOpen} />
     </div>
   );
 }

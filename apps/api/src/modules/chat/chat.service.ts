@@ -6,11 +6,15 @@ import {
   type BaseMessage,
   HumanMessage,
 } from '@langchain/core/messages';
-import type { Runnable } from '@langchain/core/runnables';
 import { concat } from '@langchain/core/utils/stream';
 
 import { env } from '@/config/env.js';
 import { logger } from '@/infrastructure/logger/index.js';
+import {
+  type GuardrailResult,
+  runInputGuardrails,
+  runOutputGuardrails,
+} from '@/langchain/guardrails/index.js';
 import {
   computeHistoryBudget,
   countMessageTokens,
@@ -23,18 +27,22 @@ import {
   type TokenBudgetPlan,
   trimHistory,
 } from '@/langchain/memory/index.js';
-import { ragPrompt, SYSTEM_PROMPT } from '@/langchain/prompts/index.js';
+import { STRUCTURED_ANSWER_SCHEMA, type StructuredAnswer } from '@/langchain/parsers/index.js';
+import { buildDynamicPrompt } from '@/langchain/prompts/index.js';
 import type { RetrievalPipeline, RetrievalStrategy } from '@/langchain/retrieval/index.js';
 import type { RetrievedChunk } from '@/langchain/retrievers/index.js';
+import type { PromptResolvedTemplate, PromptService } from '@/modules/prompts/prompt.service.js';
 
 import type { ChatRequestInput } from './chat.schema.js';
 import type {
   ChatCitation,
   ChatResponse,
+  PromptInfo,
   RetrievalInfo,
   RetrievalOptions,
   StreamChunk,
   StreamOptions,
+  StructuredOutputInfo,
 } from './chat.types.js';
 import type { RedisChatMemoryStore } from './infrastructure/redis-chat-memory-store.js';
 
@@ -58,28 +66,41 @@ interface MemoryContext {
   semanticFacts: SemanticFact[];
 }
 
-/** Token cost of the system prompt's static text, counted once at module
- * load — it never changes between requests. Placeholder tokens
- * (`{context}` etc., replaced before the model ever sees them) are
- * stripped first so they aren't double-counted alongside §3's separate
- * `context`/`summary`/`memory`/`question` counts. */
-const SYSTEM_PROMPT_STATIC_TOKENS = countTokens(SYSTEM_PROMPT.replace(/\{\w+\}/g, ''));
+/** Which prompt template/version to use, and how to use it — resolved once
+ * per turn from the request's optional Phase 4 fields (chat.schema.ts). */
+interface PromptSelection {
+  templateId?: string | undefined;
+  version?: number | undefined;
+  useFewShot: boolean;
+  structuredOutput: boolean;
+}
+
+const GUARDRAIL_REFUSAL_TEXT =
+  "I can't help with that request — it was flagged by an input safety check, so I didn't generate a response.";
+
+const STRUCTURED_OUTPUT_SCHEMA_NAME = 'structured_answer';
 
 export class ChatService {
-  /** LCEL chain: prompt template piped into the active chat model provider. */
-  private readonly chain: Runnable<RagChainInput, AIMessageChunk>;
-
   constructor(
     private readonly chatModel: BaseChatModel,
     private readonly retrievalPipeline: RetrievalPipeline,
     private readonly historyStore: RedisChatMemoryStore,
+    private readonly promptService: PromptService,
     private readonly semanticMemoryStore?: SemanticMemoryStore,
-  ) {
-    this.chain = ragPrompt.pipe(this.chatModel);
-  }
+  ) {}
 
   public async invoke(request: ChatRequestInput): Promise<ChatResponse> {
     const sessionId = request.sessionId ?? randomUUID();
+    const selection = toPromptSelection(request);
+
+    const [template, inputGuardrails] = await Promise.all([
+      this.promptService.resolveVersion(selection.templateId, selection.version),
+      Promise.resolve(runInputGuardrails(request.message)),
+    ]);
+
+    if (this.isBlocked(inputGuardrails)) {
+      return this.buildBlockedResponse(sessionId, request.message, template, inputGuardrails);
+    }
 
     const [{ chunks, retrieval }, memoryContext] = await Promise.all([
       this.retrieve(request.message, toRetrievalOptions(request)),
@@ -88,37 +109,50 @@ export class ChatService {
 
     const context = this.buildContext(chunks);
     const memoryBlock = this.buildMemoryBlock(memoryContext.semanticFacts);
+    const summaryText = memoryContext.summary || 'None yet — this is a new conversation.';
+    const memoryText = memoryBlock || 'None recorded.';
     const budgetPlan = this.computeBudget(
+      this.promptOverheadTokens(template, selection.useFewShot),
       context,
-      memoryContext.summary,
-      memoryBlock,
+      summaryText,
+      memoryText,
       request.message,
     );
     const history = await trimHistory(memoryContext.rawMessages, budgetPlan.historyBudgetTokens);
 
-    const response = await this.chain.invoke({
+    const chainInput: RagChainInput = {
       context,
-      summary: memoryContext.summary || 'None yet — this is a new conversation.',
-      memory: memoryBlock || 'None recorded.',
+      summary: summaryText,
+      memory: memoryText,
       history,
       question: request.message,
-    });
+    };
+
+    const generation = await this.generate(template, selection, chainInput);
 
     await this.historyStore.appendTurn(
       sessionId,
       new HumanMessage(request.message),
-      new AIMessage(response.text),
+      new AIMessage(generation.reply),
     );
-    this.extractSemanticMemoryInBackground(sessionId, request.message, response.text);
+    this.extractSemanticMemoryInBackground(sessionId, request.message, generation.reply);
+
+    const outputGuardrails = runOutputGuardrails(generation.reply, {
+      hasContext: chunks.length > 0,
+      isStructuredOutput: selection.structuredOutput,
+    });
 
     return {
       sessionId,
-      reply: response.text,
+      reply: generation.reply,
       model: env.GROQ_MODEL,
       citations: this.toCitations(chunks),
       retrieval,
       memory: this.buildMemoryInfo(history, budgetPlan, memoryContext),
-      ...(response.usage_metadata ? { usage: response.usage_metadata } : {}),
+      promptInfo: this.buildPromptInfo(template, selection, chainInput),
+      guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
+      ...(generation.structuredOutput ? { structuredOutput: generation.structuredOutput } : {}),
+      ...(generation.usage ? { usage: generation.usage } : {}),
     };
   }
 
@@ -126,14 +160,38 @@ export class ChatService {
     message,
     sessionId,
     retrievalOptions,
+    promptTemplateId,
+    promptVersion,
+    useFewShot,
+    structuredOutput,
     options,
   }: {
     message: string;
     sessionId?: string;
     retrievalOptions?: RetrievalOptions;
+    promptTemplateId?: string;
+    promptVersion?: number;
+    useFewShot?: boolean;
+    structuredOutput?: boolean;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
     const sid = sessionId ?? randomUUID();
+    const selection: PromptSelection = {
+      templateId: promptTemplateId,
+      version: promptVersion,
+      useFewShot: useFewShot ?? false,
+      structuredOutput: structuredOutput ?? false,
+    };
+
+    const [template, inputGuardrails] = await Promise.all([
+      this.promptService.resolveVersion(selection.templateId, selection.version),
+      Promise.resolve(runInputGuardrails(message)),
+    ]);
+
+    if (this.isBlocked(inputGuardrails)) {
+      yield* this.streamBlockedResponse(sid, message, template, inputGuardrails);
+      return;
+    }
 
     const [{ chunks, retrieval }, memoryContext] = await Promise.all([
       this.retrieve(message, retrievalOptions ?? {}),
@@ -146,41 +204,266 @@ export class ChatService {
 
     const context = this.buildContext(chunks);
     const memoryBlock = this.buildMemoryBlock(memoryContext.semanticFacts);
-    const budgetPlan = this.computeBudget(context, memoryContext.summary, memoryBlock, message);
+    const summaryText = memoryContext.summary || 'None yet — this is a new conversation.';
+    const memoryText = memoryBlock || 'None recorded.';
+    const budgetPlan = this.computeBudget(
+      this.promptOverheadTokens(template, selection.useFewShot),
+      context,
+      summaryText,
+      memoryText,
+      message,
+    );
     const history = await trimHistory(memoryContext.rawMessages, budgetPlan.historyBudgetTokens);
 
-    let fullText = '';
-    let aggregated: AIMessage | undefined;
+    const chainInput: RagChainInput = {
+      context,
+      summary: summaryText,
+      memory: memoryText,
+      history,
+      question: message,
+    };
 
-    const streamIterable = await this.chain.stream(
-      {
-        context,
-        summary: memoryContext.summary || 'None yet — this is a new conversation.',
-        memory: memoryBlock || 'None recorded.',
-        history,
-        question: message,
-      },
-      options?.signal ? { signal: options.signal } : {},
-    );
+    let fullText: string;
+    let usage: ChatResponse['usage'];
+    let structuredOutputInfo: StructuredOutputInfo | undefined;
 
-    for await (const part of streamIterable) {
-      aggregated = aggregated ? concat(aggregated, part) : part;
+    if (selection.structuredOutput) {
+      // Structured output can't be safely streamed token-by-token (the JSON
+      // isn't valid until the final token) — one non-streaming call, then
+      // emitted as a single `token` event, keeping the SSE contract
+      // (citations → token → done) unchanged for the client (§4).
+      const generation = await this.generateStructured(template, chainInput, options);
+      fullText = generation.reply;
+      usage = generation.usage;
+      structuredOutputInfo = generation.structuredOutput;
 
-      if (part.text) {
-        fullText += part.text;
-        yield { type: 'token', sessionId: sid, text: part.text };
+      yield { type: 'token', sessionId: sid, text: fullText };
+    } else {
+      const prompt = buildDynamicPrompt(template, { useFewShot: selection.useFewShot });
+      const chain = prompt.pipe(this.chatModel);
+
+      let aggregated: AIMessageChunk | undefined;
+      fullText = '';
+
+      const streamIterable = await chain.stream(
+        chainInput,
+        options?.signal ? { signal: options.signal } : {},
+      );
+
+      for await (const part of streamIterable) {
+        aggregated = aggregated ? concat(aggregated, part) : part;
+
+        if (part.text) {
+          fullText += part.text;
+          yield { type: 'token', sessionId: sid, text: part.text };
+        }
       }
+
+      usage = aggregated?.usage_metadata;
     }
 
     await this.historyStore.appendTurn(sid, new HumanMessage(message), new AIMessage(fullText));
     this.extractSemanticMemoryInBackground(sid, message, fullText);
+
+    const outputGuardrails = runOutputGuardrails(fullText, {
+      hasContext: chunks.length > 0,
+      isStructuredOutput: selection.structuredOutput,
+    });
 
     yield {
       type: 'done',
       sessionId: sid,
       model: env.GROQ_MODEL,
       memory: this.buildMemoryInfo(history, budgetPlan, memoryContext),
-      ...(aggregated?.usage_metadata ? { usage: aggregated.usage_metadata } : {}),
+      promptInfo: this.buildPromptInfo(template, selection, chainInput),
+      guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
+      ...(structuredOutputInfo ? { structuredOutput: structuredOutputInfo } : {}),
+      ...(usage ? { usage } : {}),
+    };
+  }
+
+  /**
+   * Runs the model call for a turn — either the normal streaming-capable
+   * prose chain, or (when `structuredOutput` was requested) one
+   * non-streaming `withStructuredOutput` call (§4).
+   */
+  private async generate(
+    template: PromptResolvedTemplate,
+    selection: PromptSelection,
+    chainInput: RagChainInput,
+  ): Promise<{
+    reply: string;
+    usage: ChatResponse['usage'];
+    structuredOutput?: StructuredOutputInfo;
+  }> {
+    if (selection.structuredOutput) {
+      return this.generateStructured(template, chainInput);
+    }
+
+    const prompt = buildDynamicPrompt(template, { useFewShot: selection.useFewShot });
+    const response = await prompt.pipe(this.chatModel).invoke(chainInput);
+
+    return { reply: response.text, usage: response.usage_metadata };
+  }
+
+  /**
+   * `withStructuredOutput` is what demonstrates both "JSON mode" (the
+   * wire-level `response_format` mechanism it configures on the model
+   * request) and "output parsers" (the Zod validation layer that turns the
+   * raw JSON string back into a typed, validated object) together in a
+   * single LangChain call — see `extract-memory-facts.ts` for the
+   * hand-rolled, lower-level equivalent already elsewhere in this codebase.
+   *
+   * Fails closed on any parse/validation error: the client still gets a
+   * normal chat reply (a short apology) plus `structuredOutput.valid: false`,
+   * rather than a 500.
+   */
+  private async generateStructured(
+    template: PromptResolvedTemplate,
+    chainInput: RagChainInput,
+    options?: StreamOptions,
+  ): Promise<{
+    reply: string;
+    usage: ChatResponse['usage'];
+    structuredOutput: StructuredOutputInfo;
+  }> {
+    const prompt = buildDynamicPrompt(template, { useFewShot: false });
+    const structuredModel = this.chatModel.withStructuredOutput<StructuredAnswer>(
+      STRUCTURED_ANSWER_SCHEMA,
+      { includeRaw: true, name: STRUCTURED_OUTPUT_SCHEMA_NAME },
+    );
+
+    try {
+      const { raw, parsed } = await prompt
+        .pipe(structuredModel)
+        .invoke(chainInput, options?.signal ? { signal: options.signal } : {});
+
+      return {
+        reply: parsed.answer,
+        usage: (raw as AIMessage).usage_metadata,
+        structuredOutput: { schemaName: STRUCTURED_OUTPUT_SCHEMA_NAME, data: parsed, valid: true },
+      };
+    } catch (error) {
+      logger.error({ error }, 'Structured output generation failed');
+
+      return {
+        reply: 'Sorry, I was unable to produce a structured answer for this request.',
+        usage: undefined,
+        structuredOutput: {
+          schemaName: STRUCTURED_OUTPUT_SCHEMA_NAME,
+          valid: false,
+          errors: [error instanceof Error ? error.message : String(error)],
+        },
+      };
+    }
+  }
+
+  private isBlocked(inputGuardrails: GuardrailResult[]): boolean {
+    return (
+      env.PROMPT_GUARDRAILS_MODE === 'block' && inputGuardrails.some((result) => !result.passed)
+    );
+  }
+
+  /**
+   * Short-circuits before retrieval or any LLM call (§5) — the reply is a
+   * synthesized refusal, but still recorded to history like any other turn
+   * so the conversation stays consistent, and memory/token-budget numbers
+   * still reflect reality for the next turn.
+   */
+  private async buildBlockedResponse(
+    sessionId: string,
+    message: string,
+    template: PromptResolvedTemplate,
+    inputGuardrails: GuardrailResult[],
+  ): Promise<ChatResponse> {
+    const memoryContext = await this.prepareMemoryContext(sessionId, message);
+    const summaryText = memoryContext.summary || 'None yet — this is a new conversation.';
+    const budgetPlan = this.computeBudget(
+      this.promptOverheadTokens(template, false),
+      '',
+      summaryText,
+      '',
+      message,
+    );
+    const history = await trimHistory(memoryContext.rawMessages, budgetPlan.historyBudgetTokens);
+
+    await this.historyStore.appendTurn(
+      sessionId,
+      new HumanMessage(message),
+      new AIMessage(GUARDRAIL_REFUSAL_TEXT),
+    );
+
+    return {
+      sessionId,
+      reply: GUARDRAIL_REFUSAL_TEXT,
+      model: env.GROQ_MODEL,
+      citations: [],
+      retrieval: { strategy: 'skipped', stages: [] },
+      memory: this.buildMemoryInfo(history, budgetPlan, memoryContext),
+      promptInfo: this.buildPromptInfo(
+        template,
+        { useFewShot: false },
+        {
+          context: '',
+          summary: summaryText,
+          memory: '',
+          history,
+          question: message,
+        },
+      ),
+      guardrails: { input: inputGuardrails, output: [], blocked: true },
+    };
+  }
+
+  private async *streamBlockedResponse(
+    sessionId: string,
+    message: string,
+    template: PromptResolvedTemplate,
+    inputGuardrails: GuardrailResult[],
+  ): AsyncIterable<StreamChunk> {
+    yield {
+      type: 'citations',
+      sessionId,
+      citations: [],
+      retrieval: { strategy: 'skipped', stages: [] },
+    };
+
+    const memoryContext = await this.prepareMemoryContext(sessionId, message);
+    const summaryText = memoryContext.summary || 'None yet — this is a new conversation.';
+    const budgetPlan = this.computeBudget(
+      this.promptOverheadTokens(template, false),
+      '',
+      summaryText,
+      '',
+      message,
+    );
+    const history = await trimHistory(memoryContext.rawMessages, budgetPlan.historyBudgetTokens);
+
+    yield { type: 'token', sessionId, text: GUARDRAIL_REFUSAL_TEXT };
+
+    await this.historyStore.appendTurn(
+      sessionId,
+      new HumanMessage(message),
+      new AIMessage(GUARDRAIL_REFUSAL_TEXT),
+    );
+
+    yield {
+      type: 'done',
+      sessionId,
+      model: env.GROQ_MODEL,
+      memory: this.buildMemoryInfo(history, budgetPlan, memoryContext),
+      promptInfo: this.buildPromptInfo(
+        template,
+        { useFewShot: false },
+        {
+          context: '',
+          summary: summaryText,
+          memory: '',
+          history,
+          question: message,
+        },
+      ),
+      guardrails: { input: inputGuardrails, output: [], blocked: true },
     };
   }
 
@@ -255,18 +538,39 @@ export class ChatService {
   }
 
   private computeBudget(
+    promptOverheadTokens: number,
     context: string,
     summary: string,
     memoryBlock: string,
     question: string,
   ): TokenBudgetPlan {
     return computeHistoryBudget({
-      systemPromptTokens: SYSTEM_PROMPT_STATIC_TOKENS,
+      systemPromptTokens: promptOverheadTokens,
       context,
       summary,
       memory: memoryBlock,
       question,
     });
+  }
+
+  /**
+   * Token cost of the *selected* template's static text (placeholders
+   * stripped, since those are replaced before the model ever sees them),
+   * plus few-shot examples' cost when they're actually spliced in — the
+   * per-template replacement for Phase 3's fixed, module-level
+   * `SYSTEM_PROMPT_STATIC_TOKENS` constant, since that text now varies
+   * per-request (§6).
+   */
+  private promptOverheadTokens(template: PromptResolvedTemplate, useFewShot: boolean): number {
+    let tokens = countTokens(template.systemPrompt.replace(/\{\w+\}/g, ''));
+
+    if (useFewShot) {
+      for (const example of template.fewShotExamples) {
+        tokens += countTokens(example.input) + countTokens(example.output);
+      }
+    }
+
+    return tokens;
   }
 
   private buildMemoryBlock(facts: readonly SemanticFact[]): string {
@@ -291,6 +595,25 @@ export class ChatService {
       ...(memoryContext.summary ? { summary: memoryContext.summary } : {}),
       tokenBudget: { ...budgetPlan, historyTokensUsed },
       semanticFacts: memoryContext.semanticFacts,
+    };
+  }
+
+  private buildPromptInfo(
+    template: PromptResolvedTemplate,
+    selection: Pick<PromptSelection, 'useFewShot'>,
+    chainInput: RagChainInput,
+  ): PromptInfo {
+    return {
+      templateId: template.templateId,
+      templateName: template.templateName,
+      version: template.version,
+      usedFewShot: selection.useFewShot && template.fewShotExamples.length > 0,
+      variables: {
+        context: chainInput.context,
+        summary: chainInput.summary,
+        memory: chainInput.memory,
+        question: chainInput.question,
+      },
     };
   }
 
@@ -343,5 +666,21 @@ export function toRetrievalOptions(request: RetrievalOptionsSource): RetrievalOp
     ...(request.useQueryExpansion !== undefined
       ? { useQueryExpansion: request.useQueryExpansion }
       : {}),
+  };
+}
+
+interface PromptSelectionSource {
+  promptTemplateId?: string | undefined;
+  promptVersion?: number | undefined;
+  useFewShot?: boolean | undefined;
+  structuredOutput?: boolean | undefined;
+}
+
+function toPromptSelection(request: PromptSelectionSource): PromptSelection {
+  return {
+    templateId: request.promptTemplateId,
+    version: request.promptVersion,
+    useFewShot: request.useFewShot ?? false,
+    structuredOutput: request.structuredOutput ?? false,
   };
 }

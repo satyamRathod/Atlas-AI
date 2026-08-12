@@ -41,6 +41,12 @@ export class ChatController {
         message: query.message,
         ...(query.sessionId ? { sessionId: query.sessionId } : {}),
         retrievalOptions: toRetrievalOptions(query),
+        ...(query.promptTemplateId ? { promptTemplateId: query.promptTemplateId } : {}),
+        ...(query.promptVersion !== undefined ? { promptVersion: query.promptVersion } : {}),
+        ...(query.useFewShot !== undefined ? { useFewShot: query.useFewShot } : {}),
+        ...(query.structuredOutput !== undefined
+          ? { structuredOutput: query.structuredOutput }
+          : {}),
         options: {
           signal: abortController.signal,
         },

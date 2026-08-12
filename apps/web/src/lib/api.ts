@@ -1,4 +1,10 @@
-import type { ChatResponse, MetadataFilter, RetrievalSettings, StreamChunk } from '@/types/chat';
+import type {
+  ChatResponse,
+  MetadataFilter,
+  PromptSettings,
+  RetrievalSettings,
+  StreamChunk,
+} from '@/types/chat';
 
 export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
@@ -10,10 +16,23 @@ function buildFilters(settings: RetrievalSettings): MetadataFilter | undefined {
   return Object.keys(filters).length > 0 ? filters : undefined;
 }
 
+/** Adds the prompt settings bar's fields (Phase 4) — all optional on the wire, so an unset `PromptSettings` behaves like the server's own defaults. */
+function buildPromptFields(promptSettings?: PromptSettings) {
+  if (!promptSettings) return {};
+
+  return {
+    ...(promptSettings.templateId ? { promptTemplateId: promptSettings.templateId } : {}),
+    ...(promptSettings.version !== undefined ? { promptVersion: promptSettings.version } : {}),
+    useFewShot: promptSettings.useFewShot,
+    structuredOutput: promptSettings.structuredOutput,
+  };
+}
+
 export async function sendChatMessage(
   message: string,
   sessionId: string | undefined,
   settings: RetrievalSettings,
+  promptSettings?: PromptSettings,
 ): Promise<ChatResponse> {
   const filters = buildFilters(settings);
 
@@ -29,6 +48,7 @@ export async function sendChatMessage(
       useRerank: settings.useRerank,
       useCompression: settings.useCompression,
       useQueryExpansion: settings.useQueryExpansion,
+      ...buildPromptFields(promptSettings),
     }),
   });
 
@@ -64,6 +84,7 @@ export function streamChatMessage(
   sessionId: string | undefined,
   settings: RetrievalSettings,
   handlers: StreamChatHandlers,
+  promptSettings?: PromptSettings,
 ): () => void {
   const params = new URLSearchParams({ message, retrievalStrategy: settings.strategy });
   if (sessionId) params.set('sessionId', sessionId);
@@ -75,6 +96,15 @@ export function streamChatMessage(
   params.set('useRerank', String(settings.useRerank));
   params.set('useCompression', String(settings.useCompression));
   params.set('useQueryExpansion', String(settings.useQueryExpansion));
+
+  if (promptSettings) {
+    if (promptSettings.templateId) params.set('promptTemplateId', promptSettings.templateId);
+    if (promptSettings.version !== undefined) {
+      params.set('promptVersion', String(promptSettings.version));
+    }
+    params.set('useFewShot', String(promptSettings.useFewShot));
+    params.set('structuredOutput', String(promptSettings.structuredOutput));
+  }
 
   const source = new EventSource(`${API_BASE_URL}/api/v1/chat/stream?${params.toString()}`);
 

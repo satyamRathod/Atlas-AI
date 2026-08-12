@@ -1,6 +1,8 @@
 import type { UsageMetadata } from '@langchain/core/messages';
 
+import type { GuardrailReport } from '@/langchain/guardrails/index.js';
 import type { MemoryInfo } from '@/langchain/memory/index.js';
+import type { StructuredAnswer } from '@/langchain/parsers/index.js';
 import type { AdvancedRetrieveOptions, RetrievalStageTiming } from '@/langchain/retrieval/index.js';
 
 export interface StreamOptions {
@@ -35,6 +37,31 @@ export interface RetrievalInfo {
   stages: readonly RetrievalStageTiming[];
 }
 
+/** The resolved variables that actually went into the prompt for this turn — the authoritative source for a Variable Inspector UI, instead of the client guessing (§6). */
+export interface PromptVariablesSnapshot {
+  context: string;
+  summary: string;
+  memory: string;
+  question: string;
+}
+
+/** Which template/version rendered this turn's prompt, and whether few-shot examples were spliced in (§3, §6). */
+export interface PromptInfo {
+  templateId: string;
+  templateName: string;
+  version: number;
+  usedFewShot: boolean;
+  variables: PromptVariablesSnapshot;
+}
+
+/** Present only when the request asked for `structuredOutput: true` (§4). `valid: false` means schema validation failed and `data` is omitted. */
+export interface StructuredOutputInfo {
+  schemaName: string;
+  data?: StructuredAnswer;
+  valid: boolean;
+  errors?: string[];
+}
+
 export interface ChatResponse {
   sessionId: string;
   reply: string;
@@ -42,6 +69,9 @@ export interface ChatResponse {
   citations: readonly ChatCitation[];
   retrieval: RetrievalInfo;
   memory: MemoryInfo;
+  promptInfo: PromptInfo;
+  guardrails: GuardrailReport;
+  structuredOutput?: StructuredOutputInfo;
   usage?: UsageMetadata;
 }
 
@@ -58,6 +88,10 @@ export interface StreamChunk {
    * aren't final until the turn actually completes (Phase 3 §8).
    */
   memory?: MemoryInfo;
+  /** Also only on `done` — resolved after the model call, same reasoning as `memory` above. */
+  promptInfo?: PromptInfo;
+  guardrails?: GuardrailReport;
+  structuredOutput?: StructuredOutputInfo;
   model?: string;
   usage?: UsageMetadata;
   message?: string;

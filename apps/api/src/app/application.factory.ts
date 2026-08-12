@@ -21,6 +21,9 @@ import { createHttpServer } from '../http/server.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
 import { RedisChatMemoryStore } from '../modules/chat/infrastructure/redis-chat-memory-store.js';
+import { RedisPromptStore } from '../modules/prompts/infrastructure/redis-prompt-store.js';
+import { PromptController } from '../modules/prompts/prompt.controller.js';
+import { PromptService } from '../modules/prompts/prompt.service.js';
 import type { Application } from './application.js';
 
 export async function buildApplication(): Promise<Application> {
@@ -92,6 +95,19 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 4 — Prompt Engineering
+   |--------------------------------------------------------------------------
+   | Versioned prompt-template registry, same Redis instance as Phase 3.
+   | Seeding is idempotent (checks before creating), so it's safe to run on
+   | every boot — see docs/phases/phase-4-prompt-engineering.md §2.
+   */
+
+  const promptStore = new RedisPromptStore(redisClient);
+  const promptService = new PromptService(promptStore);
+  await promptService.seedBuiltInTemplatesIfMissing();
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
@@ -100,6 +116,7 @@ export async function buildApplication(): Promise<Application> {
     chatModel,
     retrievalPipeline,
     historyStore,
+    promptService,
     semanticMemoryStore,
   );
 
@@ -110,6 +127,7 @@ export async function buildApplication(): Promise<Application> {
    */
 
   const chatController = new ChatController(chatService);
+  const promptController = new PromptController(promptService);
 
   /*
    |--------------------------------------------------------------------------
@@ -119,6 +137,7 @@ export async function buildApplication(): Promise<Application> {
 
   const app = createApp({
     chatController,
+    promptController,
   });
 
   /*

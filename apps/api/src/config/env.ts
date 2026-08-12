@@ -139,6 +139,25 @@ const envSchema = z.object({
         .map((term) => term.trim().toLowerCase())
         .filter(Boolean),
     ),
+
+  // Tools (Phase 5) — LangChain tool-calling (bindTools). See
+  // docs/phases/phase-5-tools.md.
+  //
+  // Bounds the decide -> execute -> feed-results-back loop in
+  // ChatService — a runaway-loop guard, not a reasoning depth knob (that's
+  // Phase 6's job).
+  TOOLS_MAX_ITERATIONS: z.coerce.number().int().min(1).default(3),
+  // Per-tool-call timeout — one slow/hung tool (e.g. the weather tool's
+  // network calls) degrades that single call to an error instead of
+  // hanging the whole turn.
+  TOOLS_EXECUTION_TIMEOUT_MS: z.coerce.number().int().min(1).default(10000),
+  // Weather tool — Open-Meteo, free and keyless (no GROQ_API_KEY-style
+  // secret needed).
+  TOOLS_WEATHER_GEOCODING_URL: z.string().default('https://geocoding-api.open-meteo.com/v1/search'),
+  TOOLS_WEATHER_FORECAST_URL: z.string().default('https://api.open-meteo.com/v1/forecast'),
+  // file_search tool's own top-k for its explicit, model-triggered
+  // re-query — separate from RETRIEVAL_TOP_K's always-on context injection.
+  TOOLS_FILE_SEARCH_TOP_K: z.coerce.number().int().min(1).default(4),
 });
 
 //validate environment variables

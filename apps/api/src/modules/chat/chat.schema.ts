@@ -28,6 +28,12 @@ export const chatRequestSchema = z.object({
   promptVersion: z.coerce.number().int().min(1).optional(),
   useFewShot: z.boolean().optional(),
   structuredOutput: z.boolean().optional(),
+  // Tools (Phase 5) — `useTools` opts into the bind-tools execute-loop
+  // (default `false`, same additive convention as Phase 2/4's overrides).
+  // `enabledTools` restricts which registered tools the model may call;
+  // omitted/empty means "all registered tools", unknown names are ignored.
+  useTools: z.boolean().optional(),
+  enabledTools: z.array(z.string().trim().min(1)).optional(),
 });
 
 export type ChatRequestInput = z.infer<typeof chatRequestSchema>;
@@ -67,6 +73,20 @@ export const chatStreamQuerySchema = z.object({
   promptVersion: z.coerce.number().int().min(1).optional(),
   useFewShot: booleanQueryParam,
   structuredOutput: booleanQueryParam,
+  useTools: booleanQueryParam,
+  // Comma-joined, e.g. "calculator,get_weather" — query strings can't
+  // express arrays natively, same reasoning as `filters`' JSON encoding.
+  enabledTools: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value === undefined
+        ? undefined
+        : value
+            .split(',')
+            .map((name) => name.trim())
+            .filter(Boolean),
+    ),
 });
 
 export type ChatStreamQueryInput = z.infer<typeof chatStreamQuerySchema>;

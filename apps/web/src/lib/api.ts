@@ -4,6 +4,7 @@ import type {
   PromptSettings,
   RetrievalSettings,
   StreamChunk,
+  ToolSettings,
 } from '@/types/chat';
 
 export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
@@ -28,11 +29,22 @@ function buildPromptFields(promptSettings?: PromptSettings) {
   };
 }
 
+/** Adds the tools settings bar's fields (Phase 5). `enabledTools: []` means "all registered tools" — omitted on the wire so the backend's own default applies. */
+function buildToolFields(toolSettings?: ToolSettings) {
+  if (!toolSettings) return {};
+
+  return {
+    useTools: toolSettings.useTools,
+    ...(toolSettings.enabledTools.length > 0 ? { enabledTools: toolSettings.enabledTools } : {}),
+  };
+}
+
 export async function sendChatMessage(
   message: string,
   sessionId: string | undefined,
   settings: RetrievalSettings,
   promptSettings?: PromptSettings,
+  toolSettings?: ToolSettings,
 ): Promise<ChatResponse> {
   const filters = buildFilters(settings);
 
@@ -49,6 +61,7 @@ export async function sendChatMessage(
       useCompression: settings.useCompression,
       useQueryExpansion: settings.useQueryExpansion,
       ...buildPromptFields(promptSettings),
+      ...buildToolFields(toolSettings),
     }),
   });
 
@@ -62,6 +75,8 @@ export async function sendChatMessage(
 export interface StreamChatHandlers {
   onCitations?: (chunk: StreamChunk) => void;
   onToken?: (chunk: StreamChunk) => void;
+  onToolCall?: (chunk: StreamChunk) => void;
+  onToolResult?: (chunk: StreamChunk) => void;
   onDone?: (chunk: StreamChunk) => void;
   onError?: (chunk: StreamChunk | { message: string }) => void;
 }
@@ -85,6 +100,7 @@ export function streamChatMessage(
   settings: RetrievalSettings,
   handlers: StreamChatHandlers,
   promptSettings?: PromptSettings,
+  toolSettings?: ToolSettings,
 ): () => void {
   const params = new URLSearchParams({ message, retrievalStrategy: settings.strategy });
   if (sessionId) params.set('sessionId', sessionId);
@@ -106,6 +122,13 @@ export function streamChatMessage(
     params.set('structuredOutput', String(promptSettings.structuredOutput));
   }
 
+  if (toolSettings) {
+    params.set('useTools', String(toolSettings.useTools));
+    if (toolSettings.enabledTools.length > 0) {
+      params.set('enabledTools', toolSettings.enabledTools.join(','));
+    }
+  }
+
   const source = new EventSource(`${API_BASE_URL}/api/v1/chat/stream?${params.toString()}`);
 
   const parse = (event: MessageEvent<string>): StreamChunk => JSON.parse(event.data) as StreamChunk;
@@ -116,6 +139,14 @@ export function streamChatMessage(
 
   source.addEventListener('token', (event) => {
     handlers.onToken?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('tool_call', (event) => {
+    handlers.onToolCall?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('tool_result', (event) => {
+    handlers.onToolResult?.(parse(event as MessageEvent<string>));
   });
 
   source.addEventListener('done', (event) => {

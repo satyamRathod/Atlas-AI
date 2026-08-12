@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { streamChatMessage } from '@/lib/api';
-import type { ChatMessage, PromptSettings, RetrievalSettings } from '@/types/chat';
+import type {
+  ChatMessage,
+  PromptSettings,
+  RetrievalSettings,
+  ToolCallDisplay,
+  ToolSettings,
+} from '@/types/chat';
 
 const STORAGE_KEY = 'atlas.chat.v1';
 
@@ -54,7 +60,12 @@ export function useChat() {
   );
 
   const sendMessage = useCallback(
-    (content: string, retrievalSettings: RetrievalSettings, promptSettings?: PromptSettings) => {
+    (
+      content: string,
+      retrievalSettings: RetrievalSettings,
+      promptSettings?: PromptSettings,
+      toolSettings?: ToolSettings,
+    ) => {
       const trimmed = content.trim();
       if (!trimmed || isStreaming) return;
 
@@ -97,6 +108,22 @@ export function useChat() {
               firstTokenMs,
             }));
           },
+          onToolCall: (chunk) => {
+            if (!chunk.toolCall) return;
+            const { id, name, args } = chunk.toolCall;
+            updateAssistantMessage(assistantId, (msg) => ({
+              toolCalls: [...(msg.toolCalls ?? []), { id, name, args, status: 'running' }],
+            }));
+          },
+          onToolResult: (chunk) => {
+            if (!chunk.toolResult) return;
+            const result = chunk.toolResult;
+            updateAssistantMessage(assistantId, (msg) => ({
+              toolCalls: (msg.toolCalls ?? []).map(
+                (call): ToolCallDisplay => (call.id === result.id ? { ...call, ...result } : call),
+              ),
+            }));
+          },
           onDone: (chunk) => {
             updateAssistantMessage(assistantId, {
               isStreaming: false,
@@ -106,6 +133,7 @@ export function useChat() {
               promptInfo: chunk.promptInfo,
               guardrails: chunk.guardrails,
               structuredOutput: chunk.structuredOutput,
+              ...(chunk.toolCalls !== undefined ? { toolCalls: chunk.toolCalls } : {}),
               latencyMs: performance.now() - startedAt,
             });
             setIsStreaming(false);
@@ -119,6 +147,7 @@ export function useChat() {
           },
         },
         promptSettings,
+        toolSettings,
       );
 
       closeStreamRef.current = close;

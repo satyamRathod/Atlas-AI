@@ -14,6 +14,7 @@ import {
   createSelfQueryRetriever,
   toParentDocumentRetriever,
 } from '@/langchain/retrievers/index.js';
+import { createToolRegistry, ToolExecutor } from '@/langchain/tools/index.js';
 import { createQdrantVectorStore } from '@/langchain/vectorstores/index.js';
 
 import { createApp } from '../http/app.js';
@@ -24,6 +25,7 @@ import { RedisChatMemoryStore } from '../modules/chat/infrastructure/redis-chat-
 import { RedisPromptStore } from '../modules/prompts/infrastructure/redis-prompt-store.js';
 import { PromptController } from '../modules/prompts/prompt.controller.js';
 import { PromptService } from '../modules/prompts/prompt.service.js';
+import { ToolsController } from '../modules/tools/tools.controller.js';
 import type { Application } from './application.js';
 
 export async function buildApplication(): Promise<Application> {
@@ -108,6 +110,19 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 5 — Tools
+   |--------------------------------------------------------------------------
+   | All five tools are registered up front — same "build everything at
+   | boot, branch per-request" shape as the Phase 2 retrieval pipeline.
+   | file_search reuses the retrievalPipeline built above instead of
+   | standing up a second retrieval path — see docs/phases/phase-5-tools.md.
+   */
+
+  const toolRegistry = createToolRegistry({ retrievalPipeline });
+  const toolExecutor = new ToolExecutor(toolRegistry, env.TOOLS_EXECUTION_TIMEOUT_MS);
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
@@ -117,6 +132,7 @@ export async function buildApplication(): Promise<Application> {
     retrievalPipeline,
     historyStore,
     promptService,
+    toolExecutor,
     semanticMemoryStore,
   );
 
@@ -128,6 +144,7 @@ export async function buildApplication(): Promise<Application> {
 
   const chatController = new ChatController(chatService);
   const promptController = new PromptController(promptService);
+  const toolsController = new ToolsController(toolExecutor);
 
   /*
    |--------------------------------------------------------------------------
@@ -138,6 +155,7 @@ export async function buildApplication(): Promise<Application> {
   const app = createApp({
     chatController,
     promptController,
+    toolsController,
   });
 
   /*

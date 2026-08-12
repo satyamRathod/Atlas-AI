@@ -8,6 +8,7 @@ import { PromptPreviewPanel } from '@/components/chat/prompt-preview-panel';
 import { RetrievalTimeline } from '@/components/chat/retrieval-timeline';
 import { citationAnchorId, SourcesPanel } from '@/components/chat/sources-panel';
 import { StructuredOutputViewer } from '@/components/chat/structured-output-viewer';
+import { ToolTimeline } from '@/components/chat/tool-timeline';
 import { UsageBadges } from '@/components/chat/usage-badges';
 import { VariableInspectorPanel } from '@/components/chat/variable-inspector-panel';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -107,6 +108,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             message.usage ||
             message.memory ||
             message.promptInfo ||
+            (message.toolCalls && message.toolCalls.length > 0) ||
             message.latencyMs !== undefined) && (
             <div className="flex w-full flex-col gap-2 px-1">
               <SourcesPanel
@@ -120,6 +122,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               <MemoryPanel memory={message.memory} />
               <VariableInspectorPanel promptInfo={message.promptInfo} />
               <StructuredOutputViewer structuredOutput={message.structuredOutput} />
+              <ToolTimeline toolCalls={message.toolCalls} />
               <GuardrailsPanel guardrails={message.guardrails} />
               <UsageBadges
                 usage={message.usage}

@@ -47,6 +47,8 @@ export class ChatController {
         ...(query.structuredOutput !== undefined
           ? { structuredOutput: query.structuredOutput }
           : {}),
+        ...(query.useTools !== undefined ? { useTools: query.useTools } : {}),
+        ...(query.enabledTools !== undefined ? { enabledTools: query.enabledTools } : {}),
         options: {
           signal: abortController.signal,
         },

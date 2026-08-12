@@ -5,6 +5,7 @@ import {
   type AIMessageChunk,
   type BaseMessage,
   HumanMessage,
+  ToolMessage,
 } from '@langchain/core/messages';
 import { concat } from '@langchain/core/utils/stream';
 
@@ -31,6 +32,7 @@ import { STRUCTURED_ANSWER_SCHEMA, type StructuredAnswer } from '@/langchain/par
 import { buildDynamicPrompt } from '@/langchain/prompts/index.js';
 import type { RetrievalPipeline, RetrievalStrategy } from '@/langchain/retrieval/index.js';
 import type { RetrievedChunk } from '@/langchain/retrievers/index.js';
+import type { ToolCallInfo, ToolCallStart, ToolExecutor } from '@/langchain/tools/index.js';
 import type { PromptResolvedTemplate, PromptService } from '@/modules/prompts/prompt.service.js';
 
 import type { ChatRequestInput } from './chat.schema.js';
@@ -75,10 +77,30 @@ interface PromptSelection {
   structuredOutput: boolean;
 }
 
+/** Whether this turn should run the tool-calling loop, and which registered tools it may use (§4 of docs/phases/phase-5-tools.md). */
+interface ToolSelection {
+  useTools: boolean;
+  enabledTools?: string[] | undefined;
+}
+
+/** One `tool_call`/`tool_result` pair as it happens, mid-loop — what `generateWithTools()` yields so the streaming path can forward it live. */
+type ToolLoopEvent =
+  | { type: 'tool_call'; toolCall: ToolCallStart }
+  | { type: 'tool_result'; toolResult: ToolCallInfo };
+
+interface ToolLoopResult {
+  reply: string;
+  usage: ChatResponse['usage'];
+  toolCalls: ToolCallInfo[];
+}
+
 const GUARDRAIL_REFUSAL_TEXT =
   "I can't help with that request — it was flagged by an input safety check, so I didn't generate a response.";
 
 const STRUCTURED_OUTPUT_SCHEMA_NAME = 'structured_answer';
+
+const TOOL_LOOP_EXHAUSTED_TEXT =
+  "I wasn't able to reach a final answer using the available tools within the allowed number of steps. Here's what I found so far, though it may be incomplete.";
 
 export class ChatService {
   constructor(
@@ -86,12 +108,14 @@ export class ChatService {
     private readonly retrievalPipeline: RetrievalPipeline,
     private readonly historyStore: RedisChatMemoryStore,
     private readonly promptService: PromptService,
+    private readonly toolExecutor: ToolExecutor,
     private readonly semanticMemoryStore?: SemanticMemoryStore,
   ) {}
 
   public async invoke(request: ChatRequestInput): Promise<ChatResponse> {
     const sessionId = request.sessionId ?? randomUUID();
     const selection = toPromptSelection(request);
+    const toolSelection = toToolSelection(request);
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -128,7 +152,7 @@ export class ChatService {
       question: request.message,
     };
 
-    const generation = await this.generate(template, selection, chainInput);
+    const generation = await this.generate(template, selection, chainInput, toolSelection);
 
     await this.historyStore.appendTurn(
       sessionId,
@@ -139,7 +163,7 @@ export class ChatService {
 
     const outputGuardrails = runOutputGuardrails(generation.reply, {
       hasContext: chunks.length > 0,
-      isStructuredOutput: selection.structuredOutput,
+      isStructuredOutput: selection.structuredOutput || (generation.toolCalls?.length ?? 0) > 0,
     });
 
     return {
@@ -152,6 +176,7 @@ export class ChatService {
       promptInfo: this.buildPromptInfo(template, selection, chainInput),
       guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
       ...(generation.structuredOutput ? { structuredOutput: generation.structuredOutput } : {}),
+      ...(generation.toolCalls !== undefined ? { toolCalls: generation.toolCalls } : {}),
       ...(generation.usage ? { usage: generation.usage } : {}),
     };
   }
@@ -164,6 +189,8 @@ export class ChatService {
     promptVersion,
     useFewShot,
     structuredOutput,
+    useTools,
+    enabledTools,
     options,
   }: {
     message: string;
@@ -173,6 +200,8 @@ export class ChatService {
     promptVersion?: number;
     useFewShot?: boolean;
     structuredOutput?: boolean;
+    useTools?: boolean;
+    enabledTools?: string[];
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
     const sid = sessionId ?? randomUUID();
@@ -182,6 +211,7 @@ export class ChatService {
       useFewShot: useFewShot ?? false,
       structuredOutput: structuredOutput ?? false,
     };
+    const toolSelection: ToolSelection = { useTools: useTools ?? false, enabledTools };
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -226,8 +256,33 @@ export class ChatService {
     let fullText: string;
     let usage: ChatResponse['usage'];
     let structuredOutputInfo: StructuredOutputInfo | undefined;
+    let toolCallsInfo: ToolCallInfo[] | undefined;
 
-    if (selection.structuredOutput) {
+    if (toolSelection.useTools) {
+      // Like structured output below, the tool loop always runs
+      // non-streaming internally (each intermediate model decision isn't
+      // meaningful to stream token-by-token) — but unlike structured
+      // output, it yields live `tool_call`/`tool_result` events as they
+      // happen, so the UI still gets real-time progress (§4).
+      const loop = this.generateWithTools(template, chainInput, toolSelection);
+      let step = await loop.next();
+
+      while (!step.done) {
+        const event = step.value;
+        if (event.type === 'tool_call') {
+          yield { type: 'tool_call', sessionId: sid, toolCall: event.toolCall };
+        } else {
+          yield { type: 'tool_result', sessionId: sid, toolResult: event.toolResult };
+        }
+        step = await loop.next();
+      }
+
+      fullText = step.value.reply;
+      usage = step.value.usage;
+      toolCallsInfo = step.value.toolCalls;
+
+      yield { type: 'token', sessionId: sid, text: fullText };
+    } else if (selection.structuredOutput) {
       // Structured output can't be safely streamed token-by-token (the JSON
       // isn't valid until the final token) — one non-streaming call, then
       // emitted as a single `token` event, keeping the SSE contract
@@ -267,7 +322,7 @@ export class ChatService {
 
     const outputGuardrails = runOutputGuardrails(fullText, {
       hasContext: chunks.length > 0,
-      isStructuredOutput: selection.structuredOutput,
+      isStructuredOutput: selection.structuredOutput || (toolCallsInfo?.length ?? 0) > 0,
     });
 
     yield {
@@ -278,6 +333,7 @@ export class ChatService {
       promptInfo: this.buildPromptInfo(template, selection, chainInput),
       guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
       ...(structuredOutputInfo ? { structuredOutput: structuredOutputInfo } : {}),
+      ...(toolCallsInfo !== undefined ? { toolCalls: toolCallsInfo } : {}),
       ...(usage ? { usage } : {}),
     };
   }
@@ -291,11 +347,25 @@ export class ChatService {
     template: PromptResolvedTemplate,
     selection: PromptSelection,
     chainInput: RagChainInput,
+    toolSelection: ToolSelection,
   ): Promise<{
     reply: string;
     usage: ChatResponse['usage'];
     structuredOutput?: StructuredOutputInfo;
+    toolCalls?: ToolCallInfo[];
   }> {
+    // Mutually exclusive per turn — combining forced-JSON output with
+    // tool-calling is out of scope for this phase; `useTools` wins if both
+    // are set (§4).
+    if (toolSelection.useTools) {
+      const loop = this.generateWithTools(template, chainInput, toolSelection);
+      let step = await loop.next();
+      while (!step.done) {
+        step = await loop.next();
+      }
+      return step.value;
+    }
+
     if (selection.structuredOutput) {
       return this.generateStructured(template, chainInput);
     }
@@ -304,6 +374,76 @@ export class ChatService {
     const response = await prompt.pipe(this.chatModel).invoke(chainInput);
 
     return { reply: response.text, usage: response.usage_metadata };
+  }
+
+  /**
+   * The bind-tools execute-loop (§4 of docs/phases/phase-5-tools.md): bind
+   * the enabled tools, call the model, and if it asks for tool calls,
+   * execute each one (via `ToolExecutor`, so timeout/error handling is
+   * shared), feed the results back as `ToolMessage`s, and repeat — up to
+   * `TOOLS_MAX_ITERATIONS`. Yields a `ToolLoopEvent` the instant each call
+   * starts and right after it finishes, so the streaming path can forward
+   * live progress; `invoke()`'s non-streaming path just drains the
+   * generator and keeps its final return value. Exceeding the iteration
+   * cap falls back to the last response's text (or a canned message),
+   * mirroring `GUARDRAIL_REFUSAL_TEXT`'s pattern.
+   */
+  private async *generateWithTools(
+    template: PromptResolvedTemplate,
+    chainInput: RagChainInput,
+    toolSelection: ToolSelection,
+  ): AsyncGenerator<ToolLoopEvent, ToolLoopResult, void> {
+    if (typeof this.chatModel.bindTools !== 'function') {
+      throw new Error('The configured chat model does not support tool calling.');
+    }
+
+    const prompt = buildDynamicPrompt(template, { useFewShot: false });
+    const messages: BaseMessage[] = await prompt.formatMessages(chainInput);
+    const bindableTools = this.toolExecutor.getBindableTools(toolSelection.enabledTools);
+    const modelWithTools = this.chatModel.bindTools(bindableTools);
+
+    const toolCalls: ToolCallInfo[] = [];
+    let lastReply = '';
+    let usage: ChatResponse['usage'];
+
+    for (let iteration = 0; iteration < env.TOOLS_MAX_ITERATIONS; iteration++) {
+      const response = await modelWithTools.invoke(messages);
+      usage = response.usage_metadata ?? usage;
+      lastReply = response.text;
+      messages.push(response);
+
+      if (!response.tool_calls || response.tool_calls.length === 0) {
+        return { reply: response.text, usage, toolCalls };
+      }
+
+      for (const call of response.tool_calls) {
+        const id = call.id ?? randomUUID();
+
+        yield { type: 'tool_call', toolCall: { id, name: call.name, args: call.args } };
+
+        const result = await this.toolExecutor.execute({ id, name: call.name, args: call.args });
+        toolCalls.push(result);
+
+        yield { type: 'tool_result', toolResult: result };
+
+        messages.push(
+          new ToolMessage({
+            content:
+              result.status === 'success'
+                ? JSON.stringify(result.output)
+                : `Error: ${result.error}`,
+            tool_call_id: result.id,
+            name: result.name,
+          }),
+        );
+      }
+    }
+
+    return {
+      reply: lastReply.trim().length > 0 ? lastReply : TOOL_LOOP_EXHAUSTED_TEXT,
+      usage,
+      toolCalls,
+    };
   }
 
   /**
@@ -682,5 +822,17 @@ function toPromptSelection(request: PromptSelectionSource): PromptSelection {
     version: request.promptVersion,
     useFewShot: request.useFewShot ?? false,
     structuredOutput: request.structuredOutput ?? false,
+  };
+}
+
+interface ToolSelectionSource {
+  useTools?: boolean | undefined;
+  enabledTools?: string[] | undefined;
+}
+
+function toToolSelection(request: ToolSelectionSource): ToolSelection {
+  return {
+    useTools: request.useTools ?? false,
+    enabledTools: request.enabledTools,
   };
 }

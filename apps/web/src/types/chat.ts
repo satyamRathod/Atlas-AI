@@ -155,6 +155,46 @@ export interface StructuredOutputInfo {
   errors?: readonly string[];
 }
 
+/** One registered tool the model can call. Mirrors the `{name, description}` shape `GET /api/v1/tools` returns. */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+}
+
+/** One tool-call's outcome for a turn. Mirrors `ToolCallInfo` in apps/api/src/langchain/tools/tool.types.ts. */
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  status: 'success' | 'error';
+  output?: unknown;
+  error?: string;
+  durationMs: number;
+}
+
+/** The instant a tool call starts, before it has a result. Mirrors `ToolCallStart`. */
+export interface ToolCallStart {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * A tool call as rendered in the live timeline — a UI-only superset of
+ * `ToolCallInfo` that also covers the in-flight `'running'` state between
+ * the `tool_call` and `tool_result` SSE events, before `durationMs`/
+ * `status` are known.
+ */
+export interface ToolCallDisplay {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  status: 'running' | 'success' | 'error';
+  output?: unknown;
+  error?: string;
+  durationMs?: number;
+}
+
 export interface ChatResponse {
   sessionId: string;
   reply: string;
@@ -165,10 +205,18 @@ export interface ChatResponse {
   promptInfo: PromptInfo;
   guardrails: GuardrailReport;
   structuredOutput?: StructuredOutputInfo;
+  /** Present only when the request asked for `useTools: true` (Phase 5). */
+  toolCalls?: readonly ToolCallInfo[];
   usage?: ChatUsage;
 }
 
-export type StreamChunkType = 'citations' | 'token' | 'done' | 'error';
+export type StreamChunkType =
+  | 'citations'
+  | 'token'
+  | 'tool_call'
+  | 'tool_result'
+  | 'done'
+  | 'error';
 
 export interface StreamChunk {
   type: StreamChunkType;
@@ -182,6 +230,10 @@ export interface StreamChunk {
   promptInfo?: PromptInfo;
   guardrails?: GuardrailReport;
   structuredOutput?: StructuredOutputInfo;
+  /** `tool_call` (before execution) / `tool_result` (right after) — the live tool timeline's data source. `done` also carries the full `toolCalls` array as a reconciliation source of truth. */
+  toolCall?: ToolCallStart;
+  toolResult?: ToolCallInfo;
+  toolCalls?: readonly ToolCallInfo[];
   model?: string;
   usage?: ChatUsage;
   message?: string;
@@ -216,6 +268,18 @@ export interface PromptSettings {
   structuredOutput: boolean;
 }
 
+/**
+ * The tools settings bar's UI state: whether the model may call tools this
+ * turn, and which registered tools are enabled. Sent with every chat
+ * request so the backend's Phase 5 execute-loop knows whether to bind
+ * tools at all instead of defaulting to `useTools: false`.
+ */
+export interface ToolSettings {
+  useTools: boolean;
+  /** Every known tool name currently enabled — an empty list here still means "use tools, but none enabled." */
+  enabledTools: string[];
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -227,6 +291,8 @@ export interface ChatMessage {
   promptInfo?: PromptInfo;
   guardrails?: GuardrailReport;
   structuredOutput?: StructuredOutputInfo;
+  /** Live during streaming (populated as `tool_call`/`tool_result` events arrive), reconciled on `done`. */
+  toolCalls?: readonly ToolCallDisplay[];
   usage?: ChatUsage;
   model?: string;
   /** Wall-clock time from request start to the `done` event, in ms. */

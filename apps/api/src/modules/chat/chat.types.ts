@@ -4,6 +4,7 @@ import type { GuardrailReport } from '@/langchain/guardrails/index.js';
 import type { MemoryInfo } from '@/langchain/memory/index.js';
 import type { StructuredAnswer } from '@/langchain/parsers/index.js';
 import type { AdvancedRetrieveOptions, RetrievalStageTiming } from '@/langchain/retrieval/index.js';
+import type { ToolCallInfo, ToolCallStart } from '@/langchain/tools/index.js';
 
 export interface StreamOptions {
   signal?: AbortSignal;
@@ -72,10 +73,18 @@ export interface ChatResponse {
   promptInfo: PromptInfo;
   guardrails: GuardrailReport;
   structuredOutput?: StructuredOutputInfo;
+  /** Present only when the request asked for `useTools: true` (§4 of docs/phases/phase-5-tools.md). */
+  toolCalls?: readonly ToolCallInfo[];
   usage?: UsageMetadata;
 }
 
-export type StreamChunkType = 'citations' | 'token' | 'done' | 'error';
+export type StreamChunkType =
+  | 'citations'
+  | 'token'
+  | 'tool_call'
+  | 'tool_result'
+  | 'done'
+  | 'error';
 
 export interface StreamChunk {
   type: StreamChunkType;
@@ -92,6 +101,16 @@ export interface StreamChunk {
   promptInfo?: PromptInfo;
   guardrails?: GuardrailReport;
   structuredOutput?: StructuredOutputInfo;
+  /**
+   * `tool_call` (before execution) and `tool_result` (right after) are a
+   * deliberate exception to the "only attach new fields on `done`"
+   * convention above — it's the only way the UI gets a genuine live
+   * timeline. `done` still also carries the full aggregated `toolCalls`
+   * array as a reconciliation source of truth (§4).
+   */
+  toolCall?: ToolCallStart;
+  toolResult?: ToolCallInfo;
+  toolCalls?: readonly ToolCallInfo[];
   model?: string;
   usage?: UsageMetadata;
   message?: string;

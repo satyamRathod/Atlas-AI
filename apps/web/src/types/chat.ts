@@ -195,6 +195,52 @@ export interface ToolCallDisplay {
   durationMs?: number;
 }
 
+/** One resolved ReAct step. Mirrors `AgentStepInfo` in apps/api/src/langchain/agents/agent.types.ts. */
+export interface AgentStepInfo {
+  index: number;
+  thought: string;
+  action?: string;
+  actionInput?: Record<string, unknown>;
+  status: 'success' | 'error' | 'final';
+  observation?: unknown;
+  error?: string;
+  durationMs: number;
+}
+
+/** The upfront plan plus every step actually taken. Mirrors `AgentRunInfo`. */
+export interface AgentRunInfo {
+  plan: readonly string[];
+  steps: readonly AgentStepInfo[];
+}
+
+/** A step the instant its thought/action is decided, before it has run (or before it's known there's no action). Mirrors `AgentStepStart`. */
+export interface AgentStepStart {
+  index: number;
+  thought: string;
+  action?: string;
+  actionInput?: Record<string, unknown>;
+}
+
+/**
+ * A ReAct step as rendered in the live reasoning timeline — a UI-only
+ * superset of `AgentStepInfo` that also covers the in-flight `'acting'`
+ * state between the `agent_thought` and `agent_observation` SSE events,
+ * before `status`/`observation`/`durationMs` are known. A step with no
+ * `action` is inferred to be the terminal one (`status: 'final'`)
+ * straight from its `agent_thought` event — there's no separate
+ * observation to wait for.
+ */
+export interface AgentStepDisplay {
+  index: number;
+  thought: string;
+  action?: string;
+  actionInput?: Record<string, unknown>;
+  status: 'acting' | 'success' | 'error' | 'final';
+  observation?: unknown;
+  error?: string;
+  durationMs?: number;
+}
+
 export interface ChatResponse {
   sessionId: string;
   reply: string;
@@ -207,6 +253,8 @@ export interface ChatResponse {
   structuredOutput?: StructuredOutputInfo;
   /** Present only when the request asked for `useTools: true` (Phase 5). */
   toolCalls?: readonly ToolCallInfo[];
+  /** Present only when the request asked for `useAgent: true` (Phase 6). */
+  agentRun?: AgentRunInfo;
   usage?: ChatUsage;
 }
 
@@ -215,6 +263,9 @@ export type StreamChunkType =
   | 'token'
   | 'tool_call'
   | 'tool_result'
+  | 'agent_plan'
+  | 'agent_thought'
+  | 'agent_observation'
   | 'done'
   | 'error';
 
@@ -234,6 +285,11 @@ export interface StreamChunk {
   toolCall?: ToolCallStart;
   toolResult?: ToolCallInfo;
   toolCalls?: readonly ToolCallInfo[];
+  /** Phase 6's analogue of `toolCall`/`toolResult` above — the live reasoning timeline's data source. `done` also carries the full `agentRun`. */
+  agentPlan?: readonly string[];
+  agentStep?: AgentStepStart;
+  agentObservation?: AgentStepInfo;
+  agentRun?: AgentRunInfo;
   model?: string;
   usage?: ChatUsage;
   message?: string;
@@ -273,11 +329,16 @@ export interface PromptSettings {
  * turn, and which registered tools are enabled. Sent with every chat
  * request so the backend's Phase 5 execute-loop knows whether to bind
  * tools at all instead of defaulting to `useTools: false`.
+ *
+ * `useAgent` (Phase 6) shares the same `enabledTools` list but opts into
+ * the classic text-based ReAct loop instead — it wins if both are `true`
+ * (same precedence the backend documents).
  */
 export interface ToolSettings {
   useTools: boolean;
   /** Every known tool name currently enabled — an empty list here still means "use tools, but none enabled." */
   enabledTools: string[];
+  useAgent: boolean;
 }
 
 export interface ChatMessage {
@@ -293,6 +354,10 @@ export interface ChatMessage {
   structuredOutput?: StructuredOutputInfo;
   /** Live during streaming (populated as `tool_call`/`tool_result` events arrive), reconciled on `done`. */
   toolCalls?: readonly ToolCallDisplay[];
+  /** Live during streaming (populated as the `agent_plan` event arrives), reconciled on `done`. */
+  agentPlan?: readonly string[];
+  /** Live during streaming (populated as `agent_thought`/`agent_observation` events arrive), reconciled on `done`. */
+  agentSteps?: readonly AgentStepDisplay[];
   usage?: ChatUsage;
   model?: string;
   /** Wall-clock time from request start to the `done` event, in ms. */

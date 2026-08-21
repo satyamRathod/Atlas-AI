@@ -2,6 +2,8 @@ import { AlertTriangle, Bot, User } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AgentPlanView } from '@/components/chat/agent-plan-view';
+import { AgentReasoningTimeline } from '@/components/chat/agent-reasoning-timeline';
 import { GuardrailsPanel } from '@/components/chat/guardrails-panel';
 import { MemoryPanel } from '@/components/chat/memory-panel';
 import { PromptPreviewPanel } from '@/components/chat/prompt-preview-panel';
@@ -109,6 +111,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             message.memory ||
             message.promptInfo ||
             (message.toolCalls && message.toolCalls.length > 0) ||
+            (message.agentSteps && message.agentSteps.length > 0) ||
             message.latencyMs !== undefined) && (
             <div className="flex w-full flex-col gap-2 px-1">
               <SourcesPanel
@@ -123,6 +126,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               <VariableInspectorPanel promptInfo={message.promptInfo} />
               <StructuredOutputViewer structuredOutput={message.structuredOutput} />
               <ToolTimeline toolCalls={message.toolCalls} />
+              <AgentPlanView plan={message.agentPlan} />
+              <AgentReasoningTimeline steps={message.agentSteps} />
               <GuardrailsPanel guardrails={message.guardrails} />
               <UsageBadges
                 usage={message.usage}

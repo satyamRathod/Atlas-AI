@@ -8,9 +8,9 @@ import {
   ToolMessage,
 } from '@langchain/core/messages';
 import { concat } from '@langchain/core/utils/stream';
-
 import { env } from '@/config/env.js';
 import { logger } from '@/infrastructure/logger/index.js';
+import type { AgentLoopEvent, AgentRunInfo, ReactAgentRunner } from '@/langchain/agents/index.js';
 import {
   type GuardrailResult,
   runInputGuardrails,
@@ -83,6 +83,12 @@ interface ToolSelection {
   enabledTools?: string[] | undefined;
 }
 
+/** Whether this turn should run the ReAct agent loop instead, and which registered tools it may use (§3 of docs/phases/phase-6-agents.md). Takes precedence over `ToolSelection`/structured output when `true`. */
+interface AgentSelection {
+  useAgent: boolean;
+  enabledTools?: string[] | undefined;
+}
+
 /** One `tool_call`/`tool_result` pair as it happens, mid-loop — what `generateWithTools()` yields so the streaming path can forward it live. */
 type ToolLoopEvent =
   | { type: 'tool_call'; toolCall: ToolCallStart }
@@ -92,6 +98,12 @@ interface ToolLoopResult {
   reply: string;
   usage: ChatResponse['usage'];
   toolCalls: ToolCallInfo[];
+}
+
+interface AgentLoopResult {
+  reply: string;
+  usage: ChatResponse['usage'];
+  agentRun: AgentRunInfo;
 }
 
 const GUARDRAIL_REFUSAL_TEXT =
@@ -109,6 +121,7 @@ export class ChatService {
     private readonly historyStore: RedisChatMemoryStore,
     private readonly promptService: PromptService,
     private readonly toolExecutor: ToolExecutor,
+    private readonly reactAgentRunner: ReactAgentRunner,
     private readonly semanticMemoryStore?: SemanticMemoryStore,
   ) {}
 
@@ -116,6 +129,7 @@ export class ChatService {
     const sessionId = request.sessionId ?? randomUUID();
     const selection = toPromptSelection(request);
     const toolSelection = toToolSelection(request);
+    const agentSelection = toAgentSelection(request);
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -152,7 +166,13 @@ export class ChatService {
       question: request.message,
     };
 
-    const generation = await this.generate(template, selection, chainInput, toolSelection);
+    const generation = await this.generate(
+      template,
+      selection,
+      chainInput,
+      toolSelection,
+      agentSelection,
+    );
 
     await this.historyStore.appendTurn(
       sessionId,
@@ -163,7 +183,10 @@ export class ChatService {
 
     const outputGuardrails = runOutputGuardrails(generation.reply, {
       hasContext: chunks.length > 0,
-      isStructuredOutput: selection.structuredOutput || (generation.toolCalls?.length ?? 0) > 0,
+      isStructuredOutput:
+        selection.structuredOutput ||
+        (generation.toolCalls?.length ?? 0) > 0 ||
+        generation.agentRun !== undefined,
     });
 
     return {
@@ -177,6 +200,7 @@ export class ChatService {
       guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
       ...(generation.structuredOutput ? { structuredOutput: generation.structuredOutput } : {}),
       ...(generation.toolCalls !== undefined ? { toolCalls: generation.toolCalls } : {}),
+      ...(generation.agentRun !== undefined ? { agentRun: generation.agentRun } : {}),
       ...(generation.usage ? { usage: generation.usage } : {}),
     };
   }
@@ -191,6 +215,7 @@ export class ChatService {
     structuredOutput,
     useTools,
     enabledTools,
+    useAgent,
     options,
   }: {
     message: string;
@@ -202,6 +227,7 @@ export class ChatService {
     structuredOutput?: boolean;
     useTools?: boolean;
     enabledTools?: string[];
+    useAgent?: boolean;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
     const sid = sessionId ?? randomUUID();
@@ -212,6 +238,7 @@ export class ChatService {
       structuredOutput: structuredOutput ?? false,
     };
     const toolSelection: ToolSelection = { useTools: useTools ?? false, enabledTools };
+    const agentSelection: AgentSelection = { useAgent: useAgent ?? false, enabledTools };
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -257,8 +284,35 @@ export class ChatService {
     let usage: ChatResponse['usage'];
     let structuredOutputInfo: StructuredOutputInfo | undefined;
     let toolCallsInfo: ToolCallInfo[] | undefined;
+    let agentRunInfo: AgentRunInfo | undefined;
 
-    if (toolSelection.useTools) {
+    if (agentSelection.useAgent) {
+      // Same non-streaming-internally, live-events-forwarded shape as the
+      // tool loop below — only the final answer is token-streamed as one
+      // chunk; real-time progress instead comes from the
+      // `agent_plan`/`agent_thought`/`agent_observation` events (§4 of
+      // docs/phases/phase-6-agents.md).
+      const loop = this.generateWithAgent(chainInput, agentSelection);
+      let step = await loop.next();
+
+      while (!step.done) {
+        const event = step.value;
+        if (event.type === 'agent_plan') {
+          yield { type: 'agent_plan', sessionId: sid, agentPlan: event.plan };
+        } else if (event.type === 'agent_thought') {
+          yield { type: 'agent_thought', sessionId: sid, agentStep: event.step };
+        } else {
+          yield { type: 'agent_observation', sessionId: sid, agentObservation: event.step };
+        }
+        step = await loop.next();
+      }
+
+      fullText = step.value.reply;
+      usage = step.value.usage;
+      agentRunInfo = step.value.agentRun;
+
+      yield { type: 'token', sessionId: sid, text: fullText };
+    } else if (toolSelection.useTools) {
       // Like structured output below, the tool loop always runs
       // non-streaming internally (each intermediate model decision isn't
       // meaningful to stream token-by-token) — but unlike structured
@@ -322,7 +376,10 @@ export class ChatService {
 
     const outputGuardrails = runOutputGuardrails(fullText, {
       hasContext: chunks.length > 0,
-      isStructuredOutput: selection.structuredOutput || (toolCallsInfo?.length ?? 0) > 0,
+      isStructuredOutput:
+        selection.structuredOutput ||
+        (toolCallsInfo?.length ?? 0) > 0 ||
+        agentRunInfo !== undefined,
     });
 
     yield {
@@ -334,6 +391,7 @@ export class ChatService {
       guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
       ...(structuredOutputInfo ? { structuredOutput: structuredOutputInfo } : {}),
       ...(toolCallsInfo !== undefined ? { toolCalls: toolCallsInfo } : {}),
+      ...(agentRunInfo !== undefined ? { agentRun: agentRunInfo } : {}),
       ...(usage ? { usage } : {}),
     };
   }
@@ -348,15 +406,25 @@ export class ChatService {
     selection: PromptSelection,
     chainInput: RagChainInput,
     toolSelection: ToolSelection,
+    agentSelection: AgentSelection,
   ): Promise<{
     reply: string;
     usage: ChatResponse['usage'];
     structuredOutput?: StructuredOutputInfo;
     toolCalls?: ToolCallInfo[];
+    agentRun?: AgentRunInfo;
   }> {
-    // Mutually exclusive per turn — combining forced-JSON output with
-    // tool-calling is out of scope for this phase; `useTools` wins if both
-    // are set (§4).
+    // Mutually exclusive per turn — useAgent > useTools > structuredOutput
+    // if more than one is requested (§3 of docs/phases/phase-6-agents.md).
+    if (agentSelection.useAgent) {
+      const loop = this.generateWithAgent(chainInput, agentSelection);
+      let step = await loop.next();
+      while (!step.done) {
+        step = await loop.next();
+      }
+      return step.value;
+    }
+
     if (toolSelection.useTools) {
       const loop = this.generateWithTools(template, chainInput, toolSelection);
       let step = await loop.next();
@@ -444,6 +512,37 @@ export class ChatService {
       usage,
       toolCalls,
     };
+  }
+
+  /**
+   * The ReAct agent loop (§3/§4 of docs/phases/phase-6-agents.md) —
+   * delegates to `ReactAgentRunner.run()`, which plans then loops
+   * Thought/Action/Action Input/Observation via plain-text model calls
+   * (deliberately not `bindTools`, contrasting with `generateWithTools()`
+   * above). Only forwards `context`/`summary`/`memory` from `chainInput`
+   * (not `history` — the agent's own scratchpad plus the summary/memory
+   * blocks stand in for cross-turn context here, a documented
+   * simplification). Yields the same shape of live events
+   * `generateWithTools()` does, so the streaming path can forward
+   * `agent_plan`/`agent_thought`/`agent_observation` progress identically.
+   */
+  private async *generateWithAgent(
+    chainInput: RagChainInput,
+    agentSelection: AgentSelection,
+  ): AsyncGenerator<AgentLoopEvent, AgentLoopResult, void> {
+    const loop = this.reactAgentRunner.run(
+      chainInput.question,
+      { context: chainInput.context, summary: chainInput.summary, memory: chainInput.memory },
+      { enabledTools: agentSelection.enabledTools },
+    );
+
+    let step = await loop.next();
+    while (!step.done) {
+      yield step.value;
+      step = await loop.next();
+    }
+
+    return step.value;
   }
 
   /**
@@ -833,6 +932,18 @@ interface ToolSelectionSource {
 function toToolSelection(request: ToolSelectionSource): ToolSelection {
   return {
     useTools: request.useTools ?? false,
+    enabledTools: request.enabledTools,
+  };
+}
+
+interface AgentSelectionSource {
+  useAgent?: boolean | undefined;
+  enabledTools?: string[] | undefined;
+}
+
+function toAgentSelection(request: AgentSelectionSource): AgentSelection {
+  return {
+    useAgent: request.useAgent ?? false,
     enabledTools: request.enabledTools,
   };
 }

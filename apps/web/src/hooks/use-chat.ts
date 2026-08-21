@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { streamChatMessage } from '@/lib/api';
 import type {
+  AgentStepDisplay,
   ChatMessage,
   PromptSettings,
   RetrievalSettings,
@@ -124,6 +125,34 @@ export function useChat() {
               ),
             }));
           },
+          onAgentPlan: (chunk) => {
+            if (!chunk.agentPlan) return;
+            updateAssistantMessage(assistantId, { agentPlan: chunk.agentPlan });
+          },
+          onAgentThought: (chunk) => {
+            if (!chunk.agentStep) return;
+            const { index, thought, action, actionInput } = chunk.agentStep;
+            const row: AgentStepDisplay = {
+              index,
+              thought,
+              status: action ? 'acting' : 'final',
+              ...(action ? { action } : {}),
+              ...(actionInput ? { actionInput } : {}),
+            };
+            updateAssistantMessage(assistantId, (msg) => ({
+              agentSteps: [...(msg.agentSteps ?? []), row],
+            }));
+          },
+          onAgentObservation: (chunk) => {
+            if (!chunk.agentObservation) return;
+            const observation = chunk.agentObservation;
+            updateAssistantMessage(assistantId, (msg) => ({
+              agentSteps: (msg.agentSteps ?? []).map(
+                (step): AgentStepDisplay =>
+                  step.index === observation.index ? { ...step, ...observation } : step,
+              ),
+            }));
+          },
           onDone: (chunk) => {
             updateAssistantMessage(assistantId, {
               isStreaming: false,
@@ -134,6 +163,9 @@ export function useChat() {
               guardrails: chunk.guardrails,
               structuredOutput: chunk.structuredOutput,
               ...(chunk.toolCalls !== undefined ? { toolCalls: chunk.toolCalls } : {}),
+              ...(chunk.agentRun !== undefined
+                ? { agentPlan: chunk.agentRun.plan, agentSteps: chunk.agentRun.steps }
+                : {}),
               latencyMs: performance.now() - startedAt,
             });
             setIsStreaming(false);

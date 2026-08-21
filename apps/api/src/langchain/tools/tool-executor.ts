@@ -55,10 +55,23 @@ export class ToolExecutor {
 
   /** `names` filters to a subset (unknown names are ignored); omitted/empty means "all registered tools". */
   public getBindableTools(names?: readonly string[]): StructuredToolInterface[] {
+    return this.filterTools(names).map((entry) => entry.structuredTool);
+  }
+
+  /**
+   * The raw registered entries (including `schema`), filtered the same way
+   * as `getBindableTools()`. Used by Phase 6's `react-prompt.ts` to render
+   * each tool's name/description/args shape as plain text for the ReAct
+   * system prompt, instead of the native `bindTools` schema `getBindableTools()`
+   * produces.
+   */
+  public getRegisteredTools(names?: readonly string[]): RegisteredTool[] {
+    return this.filterTools(names);
+  }
+
+  private filterTools(names?: readonly string[]): RegisteredTool[] {
     const all = [...this.tools.values()];
-    const filtered =
-      names && names.length > 0 ? all.filter((entry) => names.includes(entry.name)) : all;
-    return filtered.map((entry) => entry.structuredTool);
+    return names && names.length > 0 ? all.filter((entry) => names.includes(entry.name)) : all;
   }
 
   public async execute(call: ToolCallRequest): Promise<ToolCallInfo> {

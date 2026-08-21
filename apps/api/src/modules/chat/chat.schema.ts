@@ -34,6 +34,12 @@ export const chatRequestSchema = z.object({
   // omitted/empty means "all registered tools", unknown names are ignored.
   useTools: z.boolean().optional(),
   enabledTools: z.array(z.string().trim().min(1)).optional(),
+  // Agents (Phase 6) — `useAgent` opts into the classic text-based ReAct
+  // loop instead of native tool-calling; reuses `enabledTools` above to
+  // scope which tools the agent may use. Precedence when multiple modes
+  // are requested: useAgent > useTools > structuredOutput (§3 of
+  // docs/phases/phase-6-agents.md).
+  useAgent: z.boolean().optional(),
 });
 
 export type ChatRequestInput = z.infer<typeof chatRequestSchema>;
@@ -87,6 +93,7 @@ export const chatStreamQuerySchema = z.object({
             .map((name) => name.trim())
             .filter(Boolean),
     ),
+  useAgent: booleanQueryParam,
 });
 
 export type ChatStreamQueryInput = z.infer<typeof chatStreamQuerySchema>;

@@ -1,5 +1,6 @@
 import type { UsageMetadata } from '@langchain/core/messages';
 
+import type { AgentRunInfo, AgentStepInfo, AgentStepStart } from '@/langchain/agents/index.js';
 import type { GuardrailReport } from '@/langchain/guardrails/index.js';
 import type { MemoryInfo } from '@/langchain/memory/index.js';
 import type { StructuredAnswer } from '@/langchain/parsers/index.js';
@@ -75,6 +76,8 @@ export interface ChatResponse {
   structuredOutput?: StructuredOutputInfo;
   /** Present only when the request asked for `useTools: true` (§4 of docs/phases/phase-5-tools.md). */
   toolCalls?: readonly ToolCallInfo[];
+  /** Present only when the request asked for `useAgent: true` (§3 of docs/phases/phase-6-agents.md) — the upfront plan plus every ReAct step actually taken. */
+  agentRun?: AgentRunInfo;
   usage?: UsageMetadata;
 }
 
@@ -83,6 +86,9 @@ export type StreamChunkType =
   | 'token'
   | 'tool_call'
   | 'tool_result'
+  | 'agent_plan'
+  | 'agent_thought'
+  | 'agent_observation'
   | 'done'
   | 'error';
 
@@ -111,6 +117,18 @@ export interface StreamChunk {
   toolCall?: ToolCallStart;
   toolResult?: ToolCallInfo;
   toolCalls?: readonly ToolCallInfo[];
+  /**
+   * `agent_plan` (once, right after planning), `agent_thought` (per step,
+   * before execution/on final answer), and `agent_observation` (per step,
+   * right after execution) are Phase 6's analogue of `toolCall`/
+   * `toolResult` above — the same deliberate live-progress exception.
+   * `done` also carries the full `agentRun` for reconciliation (§3 of
+   * docs/phases/phase-6-agents.md).
+   */
+  agentPlan?: readonly string[];
+  agentStep?: AgentStepStart;
+  agentObservation?: AgentStepInfo;
+  agentRun?: AgentRunInfo;
   model?: string;
   usage?: UsageMetadata;
   message?: string;

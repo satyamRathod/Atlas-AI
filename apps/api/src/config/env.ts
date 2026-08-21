@@ -158,6 +158,19 @@ const envSchema = z.object({
   // file_search tool's own top-k for its explicit, model-triggered
   // re-query — separate from RETRIEVAL_TOP_K's always-on context injection.
   TOOLS_FILE_SEARCH_TOP_K: z.coerce.number().int().min(1).default(4),
+
+  // Agents (Phase 6) — a classic text-based ReAct loop (Thought / Action /
+  // Action Input / Observation, hand-parsed — deliberately not bindTools),
+  // reusing Phase 5's ToolExecutor for actual tool execution. See
+  // docs/phases/phase-6-agents.md.
+  //
+  // Bounds the ReAct ask -> parse -> act -> observe loop — a separate knob
+  // from TOOLS_MAX_ITERATIONS since this is a conceptually different loop
+  // (explicit reasoning steps, not native tool_calls).
+  AGENT_MAX_STEPS: z.coerce.number().int().min(1).default(6),
+  // Max steps the upfront plan (generatePlan()) may propose, before the
+  // ReAct loop even starts.
+  AGENT_PLAN_MAX_STEPS: z.coerce.number().int().min(1).default(5),
 });
 
 //validate environment variables

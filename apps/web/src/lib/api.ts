@@ -29,13 +29,18 @@ function buildPromptFields(promptSettings?: PromptSettings) {
   };
 }
 
-/** Adds the tools settings bar's fields (Phase 5). `enabledTools: []` means "all registered tools" — omitted on the wire so the backend's own default applies. */
+/**
+ * Adds the tools settings bar's fields (Phase 5, extended for Phase 6's
+ * `useAgent`). `enabledTools: []` means "all registered tools" — omitted
+ * on the wire so the backend's own default applies.
+ */
 function buildToolFields(toolSettings?: ToolSettings) {
   if (!toolSettings) return {};
 
   return {
     useTools: toolSettings.useTools,
     ...(toolSettings.enabledTools.length > 0 ? { enabledTools: toolSettings.enabledTools } : {}),
+    useAgent: toolSettings.useAgent,
   };
 }
 
@@ -77,6 +82,9 @@ export interface StreamChatHandlers {
   onToken?: (chunk: StreamChunk) => void;
   onToolCall?: (chunk: StreamChunk) => void;
   onToolResult?: (chunk: StreamChunk) => void;
+  onAgentPlan?: (chunk: StreamChunk) => void;
+  onAgentThought?: (chunk: StreamChunk) => void;
+  onAgentObservation?: (chunk: StreamChunk) => void;
   onDone?: (chunk: StreamChunk) => void;
   onError?: (chunk: StreamChunk | { message: string }) => void;
 }
@@ -127,6 +135,7 @@ export function streamChatMessage(
     if (toolSettings.enabledTools.length > 0) {
       params.set('enabledTools', toolSettings.enabledTools.join(','));
     }
+    params.set('useAgent', String(toolSettings.useAgent));
   }
 
   const source = new EventSource(`${API_BASE_URL}/api/v1/chat/stream?${params.toString()}`);
@@ -147,6 +156,18 @@ export function streamChatMessage(
 
   source.addEventListener('tool_result', (event) => {
     handlers.onToolResult?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('agent_plan', (event) => {
+    handlers.onAgentPlan?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('agent_thought', (event) => {
+    handlers.onAgentThought?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('agent_observation', (event) => {
+    handlers.onAgentObservation?.(parse(event as MessageEvent<string>));
   });
 
   source.addEventListener('done', (event) => {

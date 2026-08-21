@@ -1,5 +1,6 @@
 import { env } from '@/config/env.js';
 import { createRedisClient } from '@/infrastructure/redis/index.js';
+import { ReactAgentRunner } from '@/langchain/agents/index.js';
 import { createChatModel } from '@/langchain/chat/index.js';
 import { createEmbeddings } from '@/langchain/embeddings/index.js';
 import { createSemanticMemoryStore, SemanticMemoryStore } from '@/langchain/memory/index.js';
@@ -123,6 +124,21 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 6 — Agents
+   |--------------------------------------------------------------------------
+   | Reuses the same `toolExecutor` Phase 5 built above — the ReAct loop
+   | executes tools identically, only the model's *decision* mechanism
+   | (text parsing vs. native bindTools) differs. See
+   | docs/phases/phase-6-agents.md.
+   */
+
+  const reactAgentRunner = new ReactAgentRunner(chatModel, toolExecutor, {
+    maxSteps: env.AGENT_MAX_STEPS,
+    planMaxSteps: env.AGENT_PLAN_MAX_STEPS,
+  });
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
@@ -133,6 +149,7 @@ export async function buildApplication(): Promise<Application> {
     historyStore,
     promptService,
     toolExecutor,
+    reactAgentRunner,
     semanticMemoryStore,
   );
 

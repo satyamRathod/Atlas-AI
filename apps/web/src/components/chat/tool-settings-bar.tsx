@@ -1,4 +1,4 @@
-import { Info, RotateCcw, Wrench } from 'lucide-react';
+import { Info, RotateCcw, Sparkles, Wrench } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -36,10 +36,12 @@ function toggleTool(
 }
 
 /**
- * Tools settings bar (Phase 5 UI) — mirrors `PromptSettingsBar`'s layout: a
- * master `Switch` for `useTools`, plus one `Switch` row per registered tool
- * (fetched from `GET /api/v1/tools`) so `enabledTools` never hardcodes tool
- * names client-side.
+ * Tools settings bar (Phase 5 UI, extended for Phase 6) — a master
+ * `Switch` for `useTools` (native tool-calling) plus a second master
+ * `Switch` for `useAgent` (the classic text-based ReAct loop), sharing one
+ * set of per-tool `Switch` rows below (fetched from `GET /api/v1/tools`)
+ * so `enabledTools` never hardcodes tool names client-side and doesn't
+ * need a second, duplicate settings bar.
  */
 export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBarProps) {
   const [tools, setTools] = useState<ToolDefinition[]>([]);
@@ -56,6 +58,7 @@ export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBar
 
   const allNames = tools.map((tool) => tool.name);
   const enabledCount = allNames.filter((name) => isToolEnabled(settings, name)).length;
+  const showToolRows = settings.useTools || settings.useAgent;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pt-3">
@@ -68,7 +71,7 @@ export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBar
               checked={settings.useTools}
               onCheckedChange={(checked) => onUpdate({ useTools: checked })}
             />
-            {settings.useTools && tools.length > 0 && (
+            {showToolRows && tools.length > 0 && (
               <Badge variant="outline" className="font-mono">
                 {enabledCount}/{tools.length} enabled
               </Badge>
@@ -87,7 +90,24 @@ export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBar
           </Button>
         </div>
 
-        {settings.useTools && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="text-muted-foreground size-4" />
+            <span className="text-sm font-medium">Agent mode (ReAct)</span>
+            <Switch
+              checked={settings.useAgent}
+              onCheckedChange={(checked) => onUpdate({ useAgent: checked })}
+            />
+          </div>
+
+          <p className="text-muted-foreground max-w-sm flex-1 text-xs leading-relaxed">
+            Runs a classic Thought/Action/Observation reasoning loop instead of native tool-calling
+            — uses the same tools below.
+            {settings.useTools && settings.useAgent && ' Wins over "Tools" if both are on.'}
+          </p>
+        </div>
+
+        {showToolRows && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {tools.map((tool) => {
               const inputId = `tool-toggle-${tool.name}`;

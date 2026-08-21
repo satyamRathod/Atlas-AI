@@ -49,6 +49,7 @@ export class ChatController {
           : {}),
         ...(query.useTools !== undefined ? { useTools: query.useTools } : {}),
         ...(query.enabledTools !== undefined ? { enabledTools: query.enabledTools } : {}),
+        ...(query.useAgent !== undefined ? { useAgent: query.useAgent } : {}),
         options: {
           signal: abortController.signal,
         },

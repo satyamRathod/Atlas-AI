@@ -171,6 +171,32 @@ const envSchema = z.object({
   // Max steps the upfront plan (generatePlan()) may propose, before the
   // ReAct loop even starts.
   AGENT_PLAN_MAX_STEPS: z.coerce.number().int().min(1).default(5),
+
+  // LangGraph (Phase 7) — an explicit StateGraph (agent -> tools loop,
+  // native bindTools) replacing the hand-rolled shapes above with real
+  // state, conditional routing, checkpoints, and human-in-the-loop
+  // interrupt/resume. See docs/phases/phase-7-langgraph.md.
+  //
+  // Bounds the agent<->tools loop — a separate knob from AGENT_MAX_STEPS/
+  // TOOLS_MAX_ITERATIONS, since this is yet another conceptually distinct
+  // loop mechanism.
+  AGENT_GRAPH_MAX_STEPS: z.coerce.number().int().min(1).default(6),
+  // Tool names that must route through the `human_approval` node before
+  // executing — everything else goes straight to `tools`. Comma-separated;
+  // defaults to just the database tool (`order_lookup`).
+  AGENT_GRAPH_APPROVAL_TOOLS: z
+    .string()
+    .default('order_lookup')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ),
+  // TTL for the Redis-backed checkpointer (`@langchain/langgraph-checkpoint-redis`)
+  // — bounds how long a paused-awaiting-approval run's state lingers in
+  // Redis if nobody ever resumes it.
+  GRAPH_CHECKPOINT_TTL_MINUTES: z.coerce.number().int().min(1).default(60),
 });
 
 //validate environment variables

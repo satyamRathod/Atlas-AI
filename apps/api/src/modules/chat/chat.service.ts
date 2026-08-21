@@ -11,6 +11,14 @@ import { concat } from '@langchain/core/utils/stream';
 import { env } from '@/config/env.js';
 import { logger } from '@/infrastructure/logger/index.js';
 import type { AgentLoopEvent, AgentRunInfo, ReactAgentRunner } from '@/langchain/agents/index.js';
+import type {
+  GraphAgentRunner,
+  GraphLoopEvent,
+  GraphNodeInfo,
+  GraphResumeDecision,
+  GraphRunInfo,
+  PendingApprovalInfo,
+} from '@/langchain/graph/index.js';
 import {
   type GuardrailResult,
   runInputGuardrails,
@@ -89,6 +97,30 @@ interface AgentSelection {
   enabledTools?: string[] | undefined;
 }
 
+/** Whether this turn should run the LangGraph agent<->tools graph instead, and which registered tools it may use (§2 of docs/phases/phase-7-langgraph.md). Takes precedence over every other mode when `true`. */
+interface GraphSelection {
+  useGraph: boolean;
+  enabledTools?: string[] | undefined;
+}
+
+/**
+ * Everything a *resume* request needs to reconstruct the turn's response
+ * that a fresh request already has in local variables — citations,
+ * retrieval/memory/prompt info, and the original question. Stashed as an
+ * opaque field on the graph's own checkpointed state at the start of
+ * `generateWithGraph()`, and read back by `invokeResume()`/`streamResume()`
+ * after the interrupt/resume round-trip, since a resume call is a brand
+ * new HTTP request with none of that context available otherwise.
+ */
+interface GraphTurnMeta {
+  question: string;
+  citations: ChatCitation[];
+  retrieval: RetrievalInfo;
+  memory: MemoryInfo;
+  promptInfo: PromptInfo;
+  hasContext: boolean;
+}
+
 /** One `tool_call`/`tool_result` pair as it happens, mid-loop — what `generateWithTools()` yields so the streaming path can forward it live. */
 type ToolLoopEvent =
   | { type: 'tool_call'; toolCall: ToolCallStart }
@@ -106,6 +138,15 @@ interface AgentLoopResult {
   agentRun: AgentRunInfo;
 }
 
+/** What `generateWithGraph()`/`resumeGraph()` resolve to once a run finishes *or* pauses — `graphRun.interrupted` tells the caller which. */
+interface GraphLoopResult {
+  reply: string;
+  usage?: ChatResponse['usage'];
+  graphRun: GraphRunInfo;
+  /** Only present when resuming — read back from the checkpointed state, since a resume request has no `turnMeta` of its own to build. */
+  resumedTurnMeta?: GraphTurnMeta;
+}
+
 const GUARDRAIL_REFUSAL_TEXT =
   "I can't help with that request — it was flagged by an input safety check, so I didn't generate a response.";
 
@@ -113,6 +154,9 @@ const STRUCTURED_OUTPUT_SCHEMA_NAME = 'structured_answer';
 
 const TOOL_LOOP_EXHAUSTED_TEXT =
   "I wasn't able to reach a final answer using the available tools within the allowed number of steps. Here's what I found so far, though it may be incomplete.";
+
+const GRAPH_PENDING_APPROVAL_TEXT =
+  "This turn is paused, waiting for approval on a sensitive action before it continues. Resume it via POST /api/v1/chat/graph/resume once you've decided.";
 
 export class ChatService {
   constructor(
@@ -122,6 +166,7 @@ export class ChatService {
     private readonly promptService: PromptService,
     private readonly toolExecutor: ToolExecutor,
     private readonly reactAgentRunner: ReactAgentRunner,
+    private readonly graphAgentRunner: GraphAgentRunner,
     private readonly semanticMemoryStore?: SemanticMemoryStore,
   ) {}
 
@@ -130,6 +175,7 @@ export class ChatService {
     const selection = toPromptSelection(request);
     const toolSelection = toToolSelection(request);
     const agentSelection = toAgentSelection(request);
+    const graphSelection = toGraphSelection(request);
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -166,13 +212,46 @@ export class ChatService {
       question: request.message,
     };
 
+    // Computed once, up front — the graph branch stashes this on the
+    // graph's own checkpointed state (§4 of docs/phases/phase-7-langgraph.md)
+    // so a *resume* request (a brand new HTTP call, no local variables of
+    // its own) can rebuild the exact same response shape later.
+    const turnMeta: GraphTurnMeta = {
+      question: request.message,
+      citations: this.toCitations(chunks),
+      retrieval,
+      memory: this.buildMemoryInfo(history, budgetPlan, memoryContext),
+      promptInfo: this.buildPromptInfo(template, selection, chainInput),
+      hasContext: chunks.length > 0,
+    };
+
     const generation = await this.generate(
       template,
       selection,
       chainInput,
       toolSelection,
       agentSelection,
+      graphSelection,
+      sessionId,
+      turnMeta,
     );
+
+    if (generation.graphRun?.interrupted) {
+      // The turn is paused, not finished — no history append, no output
+      // guardrails, no `usage` yet. It'll all happen when the client
+      // resumes via `POST /api/v1/chat/graph/resume` (§4).
+      return {
+        sessionId,
+        reply: generation.reply,
+        model: env.GROQ_MODEL,
+        citations: turnMeta.citations,
+        retrieval: turnMeta.retrieval,
+        memory: turnMeta.memory,
+        promptInfo: turnMeta.promptInfo,
+        guardrails: { input: inputGuardrails, output: [], blocked: false },
+        graphRun: generation.graphRun,
+      };
+    }
 
     await this.historyStore.appendTurn(
       sessionId,
@@ -193,15 +272,69 @@ export class ChatService {
       sessionId,
       reply: generation.reply,
       model: env.GROQ_MODEL,
-      citations: this.toCitations(chunks),
-      retrieval,
-      memory: this.buildMemoryInfo(history, budgetPlan, memoryContext),
-      promptInfo: this.buildPromptInfo(template, selection, chainInput),
+      citations: turnMeta.citations,
+      retrieval: turnMeta.retrieval,
+      memory: turnMeta.memory,
+      promptInfo: turnMeta.promptInfo,
       guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
       ...(generation.structuredOutput ? { structuredOutput: generation.structuredOutput } : {}),
       ...(generation.toolCalls !== undefined ? { toolCalls: generation.toolCalls } : {}),
       ...(generation.agentRun !== undefined ? { agentRun: generation.agentRun } : {}),
+      ...(generation.graphRun !== undefined ? { graphRun: generation.graphRun } : {}),
       ...(generation.usage ? { usage: generation.usage } : {}),
+    };
+  }
+
+  /**
+   * Resumes a turn paused by the `human_approval` node (§4). Mirrors
+   * `invoke()`'s finalization tail — `turnMeta` is read back from the
+   * graph's checkpointed state (this method has no local memory of the
+   * original turn) instead of being computed fresh.
+   */
+  public async invokeResume(
+    sessionId: string,
+    decision: GraphResumeDecision,
+  ): Promise<ChatResponse> {
+    const result = await this.drainGraphLoop(this.generateWithGraphResume(sessionId, decision));
+    const turnMeta = this.requireResumedTurnMeta(sessionId, result);
+
+    if (result.graphRun.interrupted) {
+      return {
+        sessionId,
+        reply: result.reply,
+        model: env.GROQ_MODEL,
+        citations: turnMeta.citations,
+        retrieval: turnMeta.retrieval,
+        memory: turnMeta.memory,
+        promptInfo: turnMeta.promptInfo,
+        guardrails: { input: [], output: [], blocked: false },
+        graphRun: result.graphRun,
+      };
+    }
+
+    await this.historyStore.appendTurn(
+      sessionId,
+      new HumanMessage(turnMeta.question),
+      new AIMessage(result.reply),
+    );
+    this.extractSemanticMemoryInBackground(sessionId, turnMeta.question, result.reply);
+
+    const outputGuardrails = runOutputGuardrails(result.reply, {
+      hasContext: turnMeta.hasContext,
+      isStructuredOutput: false,
+    });
+
+    return {
+      sessionId,
+      reply: result.reply,
+      model: env.GROQ_MODEL,
+      citations: turnMeta.citations,
+      retrieval: turnMeta.retrieval,
+      memory: turnMeta.memory,
+      promptInfo: turnMeta.promptInfo,
+      guardrails: { input: [], output: outputGuardrails, blocked: false },
+      graphRun: result.graphRun,
+      ...(result.usage ? { usage: result.usage } : {}),
     };
   }
 
@@ -216,6 +349,7 @@ export class ChatService {
     useTools,
     enabledTools,
     useAgent,
+    useGraph,
     options,
   }: {
     message: string;
@@ -228,6 +362,7 @@ export class ChatService {
     useTools?: boolean;
     enabledTools?: string[];
     useAgent?: boolean;
+    useGraph?: boolean;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
     const sid = sessionId ?? randomUUID();
@@ -239,6 +374,7 @@ export class ChatService {
     };
     const toolSelection: ToolSelection = { useTools: useTools ?? false, enabledTools };
     const agentSelection: AgentSelection = { useAgent: useAgent ?? false, enabledTools };
+    const graphSelection: GraphSelection = { useGraph: useGraph ?? false, enabledTools };
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -280,13 +416,65 @@ export class ChatService {
       question: message,
     };
 
+    // Computed once, up front (moved earlier than the original `done`-only
+    // computation) so the graph branch below can stash them as `turnMeta`
+    // for a later resume request to read back (§4 of
+    // docs/phases/phase-7-langgraph.md).
+    const memoryInfo = this.buildMemoryInfo(history, budgetPlan, memoryContext);
+    const promptInfoObj = this.buildPromptInfo(template, selection, chainInput);
+
     let fullText: string;
     let usage: ChatResponse['usage'];
     let structuredOutputInfo: StructuredOutputInfo | undefined;
     let toolCallsInfo: ToolCallInfo[] | undefined;
     let agentRunInfo: AgentRunInfo | undefined;
+    let graphRunInfo: GraphRunInfo | undefined;
 
-    if (agentSelection.useAgent) {
+    if (graphSelection.useGraph) {
+      const turnMeta: GraphTurnMeta = {
+        question: message,
+        citations,
+        retrieval,
+        memory: memoryInfo,
+        promptInfo: promptInfoObj,
+        hasContext: chunks.length > 0,
+      };
+
+      const loop = this.generateWithGraph(chainInput, sid, graphSelection, turnMeta);
+      let step = await loop.next();
+
+      while (!step.done) {
+        const event = step.value;
+        yield {
+          type: event.type,
+          sessionId: sid,
+          graphNode: event.node,
+        };
+        step = await loop.next();
+      }
+
+      const result = step.value;
+
+      if (result.graphRun.interrupted) {
+        yield {
+          type: 'graph_interrupt',
+          sessionId: sid,
+          ...(result.graphRun.pendingApproval
+            ? { graphInterrupt: result.graphRun.pendingApproval }
+            : {}),
+        };
+        // Paused, not finished — no history append, no `done` (§4). The
+        // client resumes via `streamResume()`, which runs this same
+        // finalization tail once the graph actually completes.
+        return;
+      }
+
+      fullText = result.reply;
+      usage = result.usage;
+      graphRunInfo = result.graphRun;
+
+      yield { type: 'token', sessionId: sid, text: fullText };
+    } else if (agentSelection.useAgent) {
       // Same non-streaming-internally, live-events-forwarded shape as the
       // tool loop below — only the final answer is token-streamed as one
       // chunk; real-time progress instead comes from the
@@ -386,13 +574,73 @@ export class ChatService {
       type: 'done',
       sessionId: sid,
       model: env.GROQ_MODEL,
-      memory: this.buildMemoryInfo(history, budgetPlan, memoryContext),
-      promptInfo: this.buildPromptInfo(template, selection, chainInput),
+      memory: memoryInfo,
+      promptInfo: promptInfoObj,
       guardrails: { input: inputGuardrails, output: outputGuardrails, blocked: false },
       ...(structuredOutputInfo ? { structuredOutput: structuredOutputInfo } : {}),
       ...(toolCallsInfo !== undefined ? { toolCalls: toolCallsInfo } : {}),
       ...(agentRunInfo !== undefined ? { agentRun: agentRunInfo } : {}),
+      ...(graphRunInfo !== undefined ? { graphRun: graphRunInfo } : {}),
       ...(usage ? { usage } : {}),
+    };
+  }
+
+  /**
+   * Resumes a turn paused by the `human_approval` node (§4), streaming the
+   * same live `graph_node_start`/`graph_node_end` progress `stream()`'s
+   * graph branch does, then running the same finalization tail as a
+   * normal turn once the graph actually completes.
+   */
+  public async *streamResume(
+    sessionId: string,
+    decision: GraphResumeDecision,
+  ): AsyncIterable<StreamChunk> {
+    const loop = this.generateWithGraphResume(sessionId, decision);
+    let step = await loop.next();
+
+    while (!step.done) {
+      const event = step.value;
+      yield { type: event.type, sessionId, graphNode: event.node };
+      step = await loop.next();
+    }
+
+    const result = step.value;
+
+    if (result.graphRun.interrupted) {
+      yield {
+        type: 'graph_interrupt',
+        sessionId,
+        ...(result.graphRun.pendingApproval
+          ? { graphInterrupt: result.graphRun.pendingApproval }
+          : {}),
+      };
+      return;
+    }
+
+    const turnMeta = this.requireResumedTurnMeta(sessionId, result);
+    yield { type: 'token', sessionId, text: result.reply };
+
+    await this.historyStore.appendTurn(
+      sessionId,
+      new HumanMessage(turnMeta.question),
+      new AIMessage(result.reply),
+    );
+    this.extractSemanticMemoryInBackground(sessionId, turnMeta.question, result.reply);
+
+    const outputGuardrails = runOutputGuardrails(result.reply, {
+      hasContext: turnMeta.hasContext,
+      isStructuredOutput: false,
+    });
+
+    yield {
+      type: 'done',
+      sessionId,
+      model: env.GROQ_MODEL,
+      memory: turnMeta.memory,
+      promptInfo: turnMeta.promptInfo,
+      guardrails: { input: [], output: outputGuardrails, blocked: false },
+      graphRun: result.graphRun,
+      ...(result.usage ? { usage: result.usage } : {}),
     };
   }
 
@@ -407,15 +655,26 @@ export class ChatService {
     chainInput: RagChainInput,
     toolSelection: ToolSelection,
     agentSelection: AgentSelection,
+    graphSelection: GraphSelection,
+    sessionId: string,
+    turnMeta: GraphTurnMeta,
   ): Promise<{
     reply: string;
     usage: ChatResponse['usage'];
     structuredOutput?: StructuredOutputInfo;
     toolCalls?: ToolCallInfo[];
     agentRun?: AgentRunInfo;
+    graphRun?: GraphRunInfo;
   }> {
-    // Mutually exclusive per turn — useAgent > useTools > structuredOutput
-    // if more than one is requested (§3 of docs/phases/phase-6-agents.md).
+    // Mutually exclusive per turn — useGraph > useAgent > useTools >
+    // structuredOutput if more than one is requested (§2 of
+    // docs/phases/phase-7-langgraph.md).
+    if (graphSelection.useGraph) {
+      const loop = this.generateWithGraph(chainInput, sessionId, graphSelection, turnMeta);
+      const result = await this.drainGraphLoop(loop);
+      return { reply: result.reply, usage: result.usage, graphRun: result.graphRun };
+    }
+
     if (agentSelection.useAgent) {
       const loop = this.generateWithAgent(chainInput, agentSelection);
       let step = await loop.next();
@@ -543,6 +802,112 @@ export class ChatService {
     }
 
     return step.value;
+  }
+
+  /**
+   * The LangGraph agent<->tools loop (§3/§4 of docs/phases/phase-7-langgraph.md)
+   * — delegates to `GraphAgentRunner.run()`, then wraps its raw result
+   * into the same `GraphLoopEvent`/`GraphLoopResult` shape
+   * `generateWithGraphResume()` below produces, so both `stream()`'s graph
+   * branch and `streamResume()` can share identical event-forwarding code.
+   * Only forwards `context`/`summary`/`memory` from `chainInput` (not
+   * `history`) — same documented simplification as `generateWithAgent()`.
+   */
+  private async *generateWithGraph(
+    chainInput: RagChainInput,
+    sessionId: string,
+    graphSelection: GraphSelection,
+    turnMeta: GraphTurnMeta,
+  ): AsyncGenerator<GraphLoopEvent, GraphLoopResult, void> {
+    const loop = this.graphAgentRunner.run(
+      {
+        question: chainInput.question,
+        context: chainInput.context,
+        summary: chainInput.summary,
+        memory: chainInput.memory,
+      },
+      sessionId,
+      graphSelection.enabledTools,
+      turnMeta as unknown as Record<string, unknown>,
+    );
+
+    return yield* this.toGraphLoopResult(loop, sessionId);
+  }
+
+  /** Resumes a paused run (§4) — same wrapping as `generateWithGraph()` above, just against `GraphAgentRunner.resume()` instead of `.run()`. */
+  private async *generateWithGraphResume(
+    sessionId: string,
+    decision: GraphResumeDecision,
+  ): AsyncGenerator<GraphLoopEvent, GraphLoopResult, void> {
+    const loop = this.graphAgentRunner.resume(sessionId, decision);
+    return yield* this.toGraphLoopResult(loop, sessionId);
+  }
+
+  /**
+   * Forwards a `GraphAgentRunner` generator's live events unchanged, and
+   * turns its raw `GraphRunResult` return value into the fully-built
+   * `GraphRunInfo` (`ChatResponse.graphRun`) shape both `run()` and
+   * `resume()` callers need.
+   */
+  private async *toGraphLoopResult(
+    loop: AsyncGenerator<
+      GraphLoopEvent,
+      {
+        interrupted: boolean;
+        reply?: string;
+        usage?: ChatResponse['usage'];
+        nodes: GraphNodeInfo[];
+        pendingApproval?: PendingApprovalInfo;
+        turnMeta?: Record<string, unknown>;
+      },
+      void
+    >,
+    sessionId: string,
+  ): AsyncGenerator<GraphLoopEvent, GraphLoopResult, void> {
+    let step = await loop.next();
+    while (!step.done) {
+      yield step.value;
+      step = await loop.next();
+    }
+
+    const result = step.value;
+    const graphRun: GraphRunInfo = {
+      nodes: result.nodes,
+      interrupted: result.interrupted,
+      threadId: sessionId,
+      ...(result.pendingApproval ? { pendingApproval: result.pendingApproval } : {}),
+    };
+
+    return {
+      reply: result.interrupted ? GRAPH_PENDING_APPROVAL_TEXT : (result.reply ?? ''),
+      graphRun,
+      ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.turnMeta ? { resumedTurnMeta: result.turnMeta as unknown as GraphTurnMeta } : {}),
+    };
+  }
+
+  /** Fully drains any of the above generators for the non-streaming (`invoke()`) path, discarding live events and keeping only the final result. */
+  private async drainGraphLoop<T>(loop: AsyncGenerator<GraphLoopEvent, T, void>): Promise<T> {
+    let step = await loop.next();
+    while (!step.done) {
+      step = await loop.next();
+    }
+    return step.value;
+  }
+
+  /**
+   * A resume request has no local memory of the original turn — `turnMeta`
+   * only exists because `generateWithGraph()` stashed it on the graph's
+   * own checkpointed state. Its absence means `sessionId` never had a
+   * graph run in the first place (or its checkpoint expired/was evicted).
+   */
+  private requireResumedTurnMeta(sessionId: string, result: GraphLoopResult): GraphTurnMeta {
+    if (!result.resumedTurnMeta) {
+      throw new Error(
+        `No paused graph run found for session "${sessionId}" — it may have already completed, expired, or never existed.`,
+      );
+    }
+    return result.resumedTurnMeta;
   }
 
   /**
@@ -944,6 +1309,18 @@ interface AgentSelectionSource {
 function toAgentSelection(request: AgentSelectionSource): AgentSelection {
   return {
     useAgent: request.useAgent ?? false,
+    enabledTools: request.enabledTools,
+  };
+}
+
+interface GraphSelectionSource {
+  useGraph?: boolean | undefined;
+  enabledTools?: string[] | undefined;
+}
+
+function toGraphSelection(request: GraphSelectionSource): GraphSelection {
+  return {
+    useGraph: request.useGraph ?? false,
     enabledTools: request.enabledTools,
   };
 }

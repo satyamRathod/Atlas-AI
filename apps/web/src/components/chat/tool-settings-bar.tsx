@@ -1,4 +1,4 @@
-import { Info, RotateCcw, Sparkles, Wrench } from 'lucide-react';
+import { GitBranch, Info, RotateCcw, Sparkles, Wrench } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -36,12 +36,13 @@ function toggleTool(
 }
 
 /**
- * Tools settings bar (Phase 5 UI, extended for Phase 6) — a master
- * `Switch` for `useTools` (native tool-calling) plus a second master
- * `Switch` for `useAgent` (the classic text-based ReAct loop), sharing one
- * set of per-tool `Switch` rows below (fetched from `GET /api/v1/tools`)
- * so `enabledTools` never hardcodes tool names client-side and doesn't
- * need a second, duplicate settings bar.
+ * Tools settings bar (Phase 5 UI, extended for Phase 6 and Phase 7) — a
+ * master `Switch` for `useTools` (native tool-calling), a second master
+ * `Switch` for `useAgent` (the classic text-based ReAct loop), and a third
+ * for `useGraph` (the LangGraph `StateGraph` with a human-approval gate),
+ * sharing one set of per-tool `Switch` rows below (fetched from
+ * `GET /api/v1/tools`) so `enabledTools` never hardcodes tool names
+ * client-side and doesn't need a third, duplicate settings bar.
  */
 export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBarProps) {
   const [tools, setTools] = useState<ToolDefinition[]>([]);
@@ -58,7 +59,7 @@ export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBar
 
   const allNames = tools.map((tool) => tool.name);
   const enabledCount = allNames.filter((name) => isToolEnabled(settings, name)).length;
-  const showToolRows = settings.useTools || settings.useAgent;
+  const showToolRows = settings.useTools || settings.useAgent || settings.useGraph;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pt-3">
@@ -104,6 +105,26 @@ export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBar
             Runs a classic Thought/Action/Observation reasoning loop instead of native tool-calling
             — uses the same tools below.
             {settings.useTools && settings.useAgent && ' Wins over "Tools" if both are on.'}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+          <div className="flex items-center gap-2">
+            <GitBranch className="text-muted-foreground size-4" />
+            <span className="text-sm font-medium">Graph mode (LangGraph)</span>
+            <Switch
+              checked={settings.useGraph}
+              onCheckedChange={(checked) => onUpdate({ useGraph: checked })}
+            />
+          </div>
+
+          <p className="text-muted-foreground max-w-sm flex-1 text-xs leading-relaxed">
+            Runs the same tools through an explicit LangGraph{' '}
+            <code className="text-[11px]">StateGraph</code> — sensitive calls (order lookup) pause
+            for human approval and every step is checkpointed to Redis.
+            {(settings.useTools || settings.useAgent) &&
+              settings.useGraph &&
+              ' Wins over "Tools" and "Agent mode" if either is also on.'}
           </p>
         </div>
 

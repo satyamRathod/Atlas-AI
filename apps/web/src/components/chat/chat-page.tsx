@@ -17,7 +17,8 @@ import { cn } from '@/lib/utils';
 type SettingsPanel = 'none' | 'retrieval' | 'prompt' | 'tools';
 
 export function ChatPage() {
-  const { messages, isStreaming, sendMessage, resetConversation } = useChat();
+  const { messages, sessionId, isStreaming, sendMessage, approveGraphRun, resetConversation } =
+    useChat();
   const { settings, updateSettings, resetSettings } = useRetrievalSettings();
   const promptSettings = usePromptSettings();
   const toolSettings = useToolSettings();
@@ -105,7 +106,7 @@ export function ChatPage() {
         />
       )}
 
-      <MessageList messages={messages} />
+      <MessageList messages={messages} sessionId={sessionId} onApproveGraph={approveGraphRun} />
 
       <div className="mx-auto w-full max-w-3xl px-4 pb-6">
         <ChatInput

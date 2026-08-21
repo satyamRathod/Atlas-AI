@@ -9,5 +9,9 @@ export function createChatRouter(controller: ChatController): Router {
 
   router.get('/stream', controller.stream.bind(controller));
 
+  router.post('/graph/resume', controller.resumeGraph);
+
+  router.get('/graph/resume/stream', controller.streamResumeGraph.bind(controller));
+
   return router;
 }

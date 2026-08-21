@@ -7,9 +7,11 @@ import type { ChatMessage } from '@/types/chat';
 
 interface MessageListProps {
   messages: ChatMessage[];
+  sessionId?: string;
+  onApproveGraph?: (messageId: string, approved: boolean, feedback?: string) => void;
 }
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, sessionId, onApproveGraph }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run whenever messages change to auto-scroll to the latest one
@@ -33,7 +35,12 @@ export function MessageList({ messages }: MessageListProps) {
     <ScrollArea className="flex-1">
       <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            sessionId={sessionId}
+            onApproveGraph={onApproveGraph}
+          />
         ))}
         <div ref={bottomRef} />
       </div>

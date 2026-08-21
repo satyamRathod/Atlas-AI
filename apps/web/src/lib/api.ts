@@ -1,5 +1,6 @@
 import type {
   ChatResponse,
+  GraphNodeInfo,
   MetadataFilter,
   PromptSettings,
   RetrievalSettings,
@@ -31,8 +32,9 @@ function buildPromptFields(promptSettings?: PromptSettings) {
 
 /**
  * Adds the tools settings bar's fields (Phase 5, extended for Phase 6's
- * `useAgent`). `enabledTools: []` means "all registered tools" — omitted
- * on the wire so the backend's own default applies.
+ * `useAgent` and Phase 7's `useGraph`). `enabledTools: []` means "all
+ * registered tools" — omitted on the wire so the backend's own default
+ * applies.
  */
 function buildToolFields(toolSettings?: ToolSettings) {
   if (!toolSettings) return {};
@@ -41,6 +43,7 @@ function buildToolFields(toolSettings?: ToolSettings) {
     useTools: toolSettings.useTools,
     ...(toolSettings.enabledTools.length > 0 ? { enabledTools: toolSettings.enabledTools } : {}),
     useAgent: toolSettings.useAgent,
+    useGraph: toolSettings.useGraph,
   };
 }
 
@@ -85,8 +88,29 @@ export interface StreamChatHandlers {
   onAgentPlan?: (chunk: StreamChunk) => void;
   onAgentThought?: (chunk: StreamChunk) => void;
   onAgentObservation?: (chunk: StreamChunk) => void;
+  onGraphNodeStart?: (chunk: StreamChunk) => void;
+  onGraphNodeEnd?: (chunk: StreamChunk) => void;
+  onGraphInterrupt?: (chunk: StreamChunk) => void;
   onDone?: (chunk: StreamChunk) => void;
   onError?: (chunk: StreamChunk | { message: string }) => void;
+}
+
+/** Wires the graph-mode (Phase 7) SSE event listeners shared by `streamChatMessage()` and `resumeGraphRun()` onto an already-open `EventSource`. */
+function attachGraphListeners(source: EventSource, handlers: StreamChatHandlers): void {
+  const parse = (event: MessageEvent<string>): StreamChunk => JSON.parse(event.data) as StreamChunk;
+
+  source.addEventListener('graph_node_start', (event) => {
+    handlers.onGraphNodeStart?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('graph_node_end', (event) => {
+    handlers.onGraphNodeEnd?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('graph_interrupt', (event) => {
+    handlers.onGraphInterrupt?.(parse(event as MessageEvent<string>));
+    source.close();
+  });
 }
 
 /**
@@ -136,6 +160,7 @@ export function streamChatMessage(
       params.set('enabledTools', toolSettings.enabledTools.join(','));
     }
     params.set('useAgent', String(toolSettings.useAgent));
+    params.set('useGraph', String(toolSettings.useGraph));
   }
 
   const source = new EventSource(`${API_BASE_URL}/api/v1/chat/stream?${params.toString()}`);
@@ -170,6 +195,8 @@ export function streamChatMessage(
     handlers.onAgentObservation?.(parse(event as MessageEvent<string>));
   });
 
+  attachGraphListeners(source, handlers);
+
   source.addEventListener('done', (event) => {
     handlers.onDone?.(parse(event as MessageEvent<string>));
     source.close();
@@ -187,3 +214,87 @@ export function streamChatMessage(
 
   return () => source.close();
 }
+
+/**
+ * Resumes a turn paused by Phase 7's `human_approval` node — opens a fresh
+ * SSE connection to `GET /chat/graph/resume/stream`, reusing the same
+ * event set `streamChatMessage()` listens for (`token`/`done`/
+ * `graph_node_start`/`graph_node_end`/`error`; another `graph_interrupt`
+ * is possible if the resumed run hits a second sensitive tool call).
+ */
+export function resumeGraphRun(
+  sessionId: string,
+  approved: boolean,
+  feedback: string | undefined,
+  handlers: StreamChatHandlers,
+): () => void {
+  const params = new URLSearchParams({ sessionId, approved: String(approved) });
+  if (feedback) params.set('feedback', feedback);
+
+  const source = new EventSource(
+    `${API_BASE_URL}/api/v1/chat/graph/resume/stream?${params.toString()}`,
+  );
+
+  const parse = (event: MessageEvent<string>): StreamChunk => JSON.parse(event.data) as StreamChunk;
+
+  source.addEventListener('token', (event) => {
+    handlers.onToken?.(parse(event as MessageEvent<string>));
+  });
+
+  attachGraphListeners(source, handlers);
+
+  source.addEventListener('done', (event) => {
+    handlers.onDone?.(parse(event as MessageEvent<string>));
+    source.close();
+  });
+
+  source.addEventListener('error', (event) => {
+    const messageEvent = event as MessageEvent<string>;
+    if (messageEvent.data) {
+      handlers.onError?.(parse(messageEvent));
+    } else {
+      handlers.onError?.({ message: 'Connection to the server was lost.' });
+    }
+    source.close();
+  });
+
+  return () => source.close();
+}
+
+/** The static topology `GET /api/v1/graph` returns — every node/edge the compiled graph can ever have, independent of any particular turn. Fetched once by `GraphVisualization` and reused across turns. */
+export interface GraphDefinition {
+  nodes: readonly { id: string; name: string }[];
+  edges: readonly { source: string; target: string; conditional: boolean }[];
+}
+
+export async function getGraphDefinition(): Promise<GraphDefinition> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/graph`);
+  if (!res.ok) {
+    throw new Error(`Failed to load graph definition (status ${res.status})`);
+  }
+  return res.json() as Promise<GraphDefinition>;
+}
+
+/** One checkpoint in a thread's history, as `GET /api/v1/graph/state/:sessionId` returns it. */
+export interface GraphCheckpointSummary {
+  checkpointId?: string;
+  next: readonly string[];
+  createdAt?: string;
+  stepCount: number;
+  messageCount: number;
+  hasPendingApproval: boolean;
+}
+
+export async function getGraphStateHistory(
+  sessionId: string,
+): Promise<readonly GraphCheckpointSummary[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/graph/state/${encodeURIComponent(sessionId)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load graph state history (status ${res.status})`);
+  }
+  const data = (await res.json()) as { checkpoints: GraphCheckpointSummary[] };
+  return data.checkpoints;
+}
+
+/** Re-exported so `graph-visualization.tsx`/`graph-execution-replay.tsx` don't need a second import path just for the shared node-status shape. */
+export type { GraphNodeInfo };

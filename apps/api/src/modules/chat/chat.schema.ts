@@ -40,9 +40,27 @@ export const chatRequestSchema = z.object({
   // are requested: useAgent > useTools > structuredOutput (§3 of
   // docs/phases/phase-6-agents.md).
   useAgent: z.boolean().optional(),
+  // LangGraph (Phase 7) — `useGraph` opts into the explicit StateGraph
+  // agent<->tools loop (native bindTools, not Phase 6's text ReAct),
+  // reusing `enabledTools` above the same way. Takes precedence over every
+  // other mode: useGraph > useAgent > useTools > structuredOutput (§2 of
+  // docs/phases/phase-7-langgraph.md).
+  useGraph: z.boolean().optional(),
 });
 
 export type ChatRequestInput = z.infer<typeof chatRequestSchema>;
+
+/**
+ * Resumes a turn paused by the `human_approval` node's `interrupt()` call
+ * (§4). `sessionId` doubles as the LangGraph checkpointer's `thread_id`.
+ */
+export const chatGraphResumeSchema = z.object({
+  sessionId: z.string().trim().min(1, 'sessionId is required'),
+  approved: z.boolean(),
+  feedback: z.string().trim().max(2000).optional(),
+});
+
+export type ChatGraphResumeInput = z.infer<typeof chatGraphResumeSchema>;
 
 const booleanQueryParam = z
   .enum(['true', 'false'])
@@ -94,6 +112,16 @@ export const chatStreamQuerySchema = z.object({
             .filter(Boolean),
     ),
   useAgent: booleanQueryParam,
+  useGraph: booleanQueryParam,
 });
 
 export type ChatStreamQueryInput = z.infer<typeof chatStreamQuerySchema>;
+
+/** `GET /graph/resume/stream`'s query-string equivalent of `chatGraphResumeSchema`. */
+export const chatGraphResumeStreamQuerySchema = z.object({
+  sessionId: z.string().trim().min(1, 'sessionId is required'),
+  approved: z.enum(['true', 'false']).transform((value) => value === 'true'),
+  feedback: z.string().trim().max(2000).optional(),
+});
+
+export type ChatGraphResumeStreamQueryInput = z.infer<typeof chatGraphResumeStreamQuerySchema>;

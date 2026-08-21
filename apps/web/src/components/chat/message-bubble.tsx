@@ -4,7 +4,11 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentPlanView } from '@/components/chat/agent-plan-view';
 import { AgentReasoningTimeline } from '@/components/chat/agent-reasoning-timeline';
+import { GraphExecutionReplay } from '@/components/chat/graph-execution-replay';
+import { GraphStateInspector } from '@/components/chat/graph-state-inspector';
+import { GraphVisualization } from '@/components/chat/graph-visualization';
 import { GuardrailsPanel } from '@/components/chat/guardrails-panel';
+import { HumanApprovalPanel } from '@/components/chat/human-approval-panel';
 import { MemoryPanel } from '@/components/chat/memory-panel';
 import { PromptPreviewPanel } from '@/components/chat/prompt-preview-panel';
 import { RetrievalTimeline } from '@/components/chat/retrieval-timeline';
@@ -19,6 +23,10 @@ import type { ChatMessage } from '@/types/chat';
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  /** Needed by `GraphStateInspector` to fetch `GET /api/v1/graph/state/:sessionId` — the LangGraph thread id is the chat session, not the message. */
+  sessionId?: string;
+  /** Wired to `useChat()`'s `approveGraphRun` — resumes this message's paused graph turn. */
+  onApproveGraph?: (messageId: string, approved: boolean, feedback?: string) => void;
 }
 
 /** Turns bare `[1]`, `[2]` citation markers into markdown links anchored to the matching SourcesPanel entry, without touching real markdown links like `[text](url)`. */
@@ -28,8 +36,9 @@ function linkifyCitations(content: string, messageId: string): string {
   });
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, sessionId, onApproveGraph }: MessageBubbleProps) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [graphActiveIndex, setGraphActiveIndex] = useState<number | undefined>(undefined);
   const isUser = message.role === 'user';
   const citations = message.citations ?? [];
 
@@ -112,6 +121,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             message.promptInfo ||
             (message.toolCalls && message.toolCalls.length > 0) ||
             (message.agentSteps && message.agentSteps.length > 0) ||
+            (message.graphNodes && message.graphNodes.length > 0) ||
+            message.pendingApproval ||
             message.latencyMs !== undefined) && (
             <div className="flex w-full flex-col gap-2 px-1">
               <SourcesPanel
@@ -128,6 +139,26 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               <ToolTimeline toolCalls={message.toolCalls} />
               <AgentPlanView plan={message.agentPlan} />
               <AgentReasoningTimeline steps={message.agentSteps} />
+              <GraphVisualization nodes={message.graphNodes} activeIndex={graphActiveIndex} />
+              <GraphExecutionReplay
+                nodes={message.graphNodes}
+                activeIndex={graphActiveIndex}
+                onActiveIndexChange={setGraphActiveIndex}
+              />
+              {sessionId && message.graphNodes && message.graphNodes.length > 0 && (
+                <GraphStateInspector
+                  sessionId={sessionId}
+                  nodes={message.graphNodes}
+                  pendingApproval={message.pendingApproval}
+                />
+              )}
+              <HumanApprovalPanel
+                pendingApproval={message.pendingApproval}
+                disabled={message.isStreaming}
+                onDecision={(approved, feedback) =>
+                  onApproveGraph?.(message.id, approved, feedback)
+                }
+              />
               <GuardrailsPanel guardrails={message.guardrails} />
               <UsageBadges
                 usage={message.usage}

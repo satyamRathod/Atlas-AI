@@ -241,6 +241,44 @@ export interface AgentStepDisplay {
   durationMs?: number;
 }
 
+/** One tool call proposed by the model, awaiting a human decision. Mirrors `PendingApprovalInfo` in apps/api/src/langchain/graph/graph.types.ts. */
+export interface PendingApprovalToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface PendingApprovalInfo {
+  toolCalls: readonly PendingApprovalToolCall[];
+  reason: string;
+}
+
+/** One node's lifecycle for a single pass through the graph this turn. Mirrors `GraphNodeInfo`. */
+export interface GraphNodeInfo {
+  nodeId: string;
+  status: 'running' | 'success' | 'error' | 'interrupted';
+  durationMs?: number;
+}
+
+/** The node-by-node timeline for a graph-mode turn. Mirrors `GraphRunInfo`. `interrupted: true` means the turn is paused awaiting `pendingApproval`. */
+export interface GraphRunInfo {
+  nodes: readonly GraphNodeInfo[];
+  interrupted: boolean;
+  threadId: string;
+  pendingApproval?: PendingApprovalInfo;
+}
+
+/**
+ * A graph node as rendered in the live visualization/timeline — a UI-only
+ * superset of `GraphNodeInfo` that also covers the in-flight `'running'`
+ * state between the `graph_node_start` and `graph_node_end` SSE events,
+ * and gives every pass through the same node a stable React key.
+ */
+export interface GraphNodeDisplay extends GraphNodeInfo {
+  /** Position in the overall node sequence for this turn (0-based) — since the same `nodeId` can appear more than once (e.g. `agent` runs before and after `tools`). */
+  step: number;
+}
+
 export interface ChatResponse {
   sessionId: string;
   reply: string;
@@ -255,6 +293,8 @@ export interface ChatResponse {
   toolCalls?: readonly ToolCallInfo[];
   /** Present only when the request asked for `useAgent: true` (Phase 6). */
   agentRun?: AgentRunInfo;
+  /** Present only when the request asked for `useGraph: true` (Phase 7). When `graphRun.interrupted` is `true`, `reply` is a placeholder and `graphRun.pendingApproval` describes what's being asked. */
+  graphRun?: GraphRunInfo;
   usage?: ChatUsage;
 }
 
@@ -266,6 +306,9 @@ export type StreamChunkType =
   | 'agent_plan'
   | 'agent_thought'
   | 'agent_observation'
+  | 'graph_node_start'
+  | 'graph_node_end'
+  | 'graph_interrupt'
   | 'done'
   | 'error';
 
@@ -290,6 +333,16 @@ export interface StreamChunk {
   agentStep?: AgentStepStart;
   agentObservation?: AgentStepInfo;
   agentRun?: AgentRunInfo;
+  /**
+   * `graph_node_start`/`graph_node_end` are Phase 7's analogue of
+   * `toolCall`/`toolResult` and `agentStep`/`agentObservation` above — the
+   * live graph-visualization data source. `graph_interrupt` fires instead
+   * of `done` when the run pauses for approval. `done` also carries the
+   * full `graphRun` for reconciliation.
+   */
+  graphNode?: GraphNodeInfo;
+  graphInterrupt?: PendingApprovalInfo;
+  graphRun?: GraphRunInfo;
   model?: string;
   usage?: ChatUsage;
   message?: string;
@@ -331,14 +384,16 @@ export interface PromptSettings {
  * tools at all instead of defaulting to `useTools: false`.
  *
  * `useAgent` (Phase 6) shares the same `enabledTools` list but opts into
- * the classic text-based ReAct loop instead — it wins if both are `true`
- * (same precedence the backend documents).
+ * the classic text-based ReAct loop instead — it wins if both are `true`.
+ * `useGraph` (Phase 7) shares it too and wins over both — same precedence
+ * the backend documents (`useGraph > useAgent > useTools`).
  */
 export interface ToolSettings {
   useTools: boolean;
   /** Every known tool name currently enabled — an empty list here still means "use tools, but none enabled." */
   enabledTools: string[];
   useAgent: boolean;
+  useGraph: boolean;
 }
 
 export interface ChatMessage {
@@ -358,6 +413,10 @@ export interface ChatMessage {
   agentPlan?: readonly string[];
   /** Live during streaming (populated as `agent_thought`/`agent_observation` events arrive), reconciled on `done`. */
   agentSteps?: readonly AgentStepDisplay[];
+  /** Live during streaming (populated as `graph_node_start`/`graph_node_end` events arrive), reconciled on `done`. */
+  graphNodes?: readonly GraphNodeDisplay[];
+  /** Set by `graph_interrupt`, cleared once `approveGraphRun()` resumes the turn. */
+  pendingApproval?: PendingApprovalInfo;
   usage?: ChatUsage;
   model?: string;
   /** Wall-clock time from request start to the `done` event, in ms. */

@@ -3,6 +3,11 @@ import { createRedisClient } from '@/infrastructure/redis/index.js';
 import { ReactAgentRunner } from '@/langchain/agents/index.js';
 import { createChatModel } from '@/langchain/chat/index.js';
 import { createEmbeddings } from '@/langchain/embeddings/index.js';
+import {
+  buildAgentGraph,
+  createGraphCheckpointer,
+  GraphAgentRunner,
+} from '@/langchain/graph/index.js';
 import { createSemanticMemoryStore, SemanticMemoryStore } from '@/langchain/memory/index.js';
 import { createAdvancedRetriever } from '@/langchain/retrieval/index.js';
 import {
@@ -23,6 +28,7 @@ import { createHttpServer } from '../http/server.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
 import { RedisChatMemoryStore } from '../modules/chat/infrastructure/redis-chat-memory-store.js';
+import { GraphController } from '../modules/graph/graph.controller.js';
 import { RedisPromptStore } from '../modules/prompts/infrastructure/redis-prompt-store.js';
 import { PromptController } from '../modules/prompts/prompt.controller.js';
 import { PromptService } from '../modules/prompts/prompt.service.js';
@@ -139,6 +145,26 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 7 — LangGraph
+   |--------------------------------------------------------------------------
+   | Same `toolExecutor` as Phase 5/6 once again — only the orchestration
+   | (explicit state, conditional routing, checkpoints, interrupts) is new.
+   | The checkpointer points at the same Redis instance every prior phase
+   | already reuses. See docs/phases/phase-7-langgraph.md.
+   */
+
+  const graphCheckpointer = await createGraphCheckpointer();
+  const compiledAgentGraph = buildAgentGraph({
+    chatModel,
+    toolExecutor,
+    checkpointer: graphCheckpointer,
+    approvalToolNames: env.AGENT_GRAPH_APPROVAL_TOOLS,
+    maxSteps: env.AGENT_GRAPH_MAX_STEPS,
+  });
+  const graphAgentRunner = new GraphAgentRunner(compiledAgentGraph);
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
@@ -150,6 +176,7 @@ export async function buildApplication(): Promise<Application> {
     promptService,
     toolExecutor,
     reactAgentRunner,
+    graphAgentRunner,
     semanticMemoryStore,
   );
 
@@ -162,6 +189,7 @@ export async function buildApplication(): Promise<Application> {
   const chatController = new ChatController(chatService);
   const promptController = new PromptController(promptService);
   const toolsController = new ToolsController(toolExecutor);
+  const graphController = new GraphController(compiledAgentGraph);
 
   /*
    |--------------------------------------------------------------------------
@@ -173,6 +201,7 @@ export async function buildApplication(): Promise<Application> {
     chatController,
     promptController,
     toolsController,
+    graphController,
   });
 
   /*

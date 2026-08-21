@@ -1,6 +1,7 @@
 import type { UsageMetadata } from '@langchain/core/messages';
 
 import type { AgentRunInfo, AgentStepInfo, AgentStepStart } from '@/langchain/agents/index.js';
+import type { GraphNodeInfo, GraphRunInfo, PendingApprovalInfo } from '@/langchain/graph/index.js';
 import type { GuardrailReport } from '@/langchain/guardrails/index.js';
 import type { MemoryInfo } from '@/langchain/memory/index.js';
 import type { StructuredAnswer } from '@/langchain/parsers/index.js';
@@ -78,6 +79,15 @@ export interface ChatResponse {
   toolCalls?: readonly ToolCallInfo[];
   /** Present only when the request asked for `useAgent: true` (§3 of docs/phases/phase-6-agents.md) — the upfront plan plus every ReAct step actually taken. */
   agentRun?: AgentRunInfo;
+  /**
+   * Present only when the request asked for `useGraph: true` (§2/§4 of
+   * docs/phases/phase-7-langgraph.md) — the node-by-node timeline for this
+   * turn. When `graphRun.interrupted` is `true`, `reply` is a placeholder
+   * ("awaiting approval") and `graphRun.pendingApproval` describes what's
+   * being asked; the turn is *not* recorded to history yet — resume via
+   * `POST /api/v1/chat/graph/resume`.
+   */
+  graphRun?: GraphRunInfo;
   usage?: UsageMetadata;
 }
 
@@ -89,6 +99,9 @@ export type StreamChunkType =
   | 'agent_plan'
   | 'agent_thought'
   | 'agent_observation'
+  | 'graph_node_start'
+  | 'graph_node_end'
+  | 'graph_interrupt'
   | 'done'
   | 'error';
 
@@ -129,6 +142,18 @@ export interface StreamChunk {
   agentStep?: AgentStepStart;
   agentObservation?: AgentStepInfo;
   agentRun?: AgentRunInfo;
+  /**
+   * `graph_node_start`/`graph_node_end` are Phase 7's analogue of
+   * `toolCall`/`toolResult` and `agentStep`/`agentObservation` above — the
+   * same deliberate live-progress exception, one per node per pass through
+   * the graph. `graph_interrupt` fires instead of `done` when the
+   * `human_approval` node pauses the run — no `done` follows until the
+   * client resumes via `/chat/graph/resume(/stream)`. `done` still carries
+   * the full `graphRun` for reconciliation once a run actually finishes.
+   */
+  graphNode?: GraphNodeInfo;
+  graphInterrupt?: PendingApprovalInfo;
+  graphRun?: GraphRunInfo;
   model?: string;
   usage?: UsageMetadata;
   message?: string;

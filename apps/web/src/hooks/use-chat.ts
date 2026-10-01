@@ -5,6 +5,7 @@ import type {
   AgentStepDisplay,
   ChatMessage,
   GraphNodeDisplay,
+  MultiAgentTurnDisplay,
   PromptSettings,
   RetrievalSettings,
   ToolCallDisplay,
@@ -59,6 +60,42 @@ function reduceGraphNodes(
   }
 
   return [...nodes, { ...update, step: nodes.length }];
+}
+
+/**
+ * Appends an `agentTurns` row for `agent_turn_start`, or fills in the
+ * matching row's final status for `agent_turn_end` — mirrors
+ * `reduceGraphNodes` above, keyed by `role` instead of `nodeId`. Unlike
+ * graph nodes, there's no "second end with no matching start" edge case
+ * here (a multi-agent turn never pauses), so the fallback branch is only
+ * ever hit if a client missed a `_start` event on a flaky connection.
+ */
+function reduceAgentTurns(
+  turns: readonly MultiAgentTurnDisplay[],
+  update: {
+    role: MultiAgentTurnDisplay['role'];
+    round: number;
+    status: MultiAgentTurnDisplay['status'];
+    durationMs?: number;
+  },
+  isStart: boolean,
+): MultiAgentTurnDisplay[] {
+  if (isStart) {
+    return [...turns, { ...update, step: turns.length }];
+  }
+
+  const lastIndex = turns.length - 1;
+  const last = turns[lastIndex];
+  if (
+    last &&
+    last.status === 'running' &&
+    last.role === update.role &&
+    last.round === update.round
+  ) {
+    return turns.map((turn, index) => (index === lastIndex ? { ...turn, ...update } : turn));
+  }
+
+  return [...turns, { ...update, step: turns.length }];
 }
 
 export function useChat() {
@@ -187,6 +224,24 @@ export function useChat() {
           });
           setIsStreaming(false);
         },
+        onAgentTurnStart: (chunk) => {
+          if (!chunk.agentTurn) return;
+          const { role, round, status } = chunk.agentTurn;
+          updateAssistantMessage(assistantId, (msg) => ({
+            agentTurns: reduceAgentTurns(msg.agentTurns ?? [], { role, round, status }, true),
+          }));
+        },
+        onAgentTurnEnd: (chunk) => {
+          if (!chunk.agentTurn) return;
+          const { role, round, status, durationMs } = chunk.agentTurn;
+          updateAssistantMessage(assistantId, (msg) => ({
+            agentTurns: reduceAgentTurns(
+              msg.agentTurns ?? [],
+              { role, round, status, ...(durationMs !== undefined ? { durationMs } : {}) },
+              false,
+            ),
+          }));
+        },
         onDone: (chunk) => {
           updateAssistantMessage(assistantId, (msg) => ({
             isStreaming: false,
@@ -211,6 +266,13 @@ export function useChat() {
             ...(chunk.graphRun !== undefined && (!msg.graphNodes || msg.graphNodes.length === 0)
               ? { graphNodes: chunk.graphRun.nodes.map((node, step) => ({ ...node, step })) }
               : {}),
+            // No resume/interrupt split for a multi-agent turn (§3 of
+            // docs/phases/phase-8-multi-agent.md) — `done` always follows the
+            // live `agent_turn_start`/`agent_turn_end` events for the same
+            // run, so setting `multiAgentRun` straight from `chunk` here is
+            // safe (unlike `graphRun.nodes` above, there's no earlier partial
+            // run's data it could ever clobber).
+            ...(chunk.multiAgentRun !== undefined ? { multiAgentRun: chunk.multiAgentRun } : {}),
             latencyMs: performance.now() - startedAt,
           }));
           setIsStreaming(false);

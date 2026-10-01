@@ -2,6 +2,7 @@ import { AlertTriangle, Bot, User } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AgentCommunicationTimeline } from '@/components/chat/agent-communication-timeline';
 import { AgentPlanView } from '@/components/chat/agent-plan-view';
 import { AgentReasoningTimeline } from '@/components/chat/agent-reasoning-timeline';
 import { GraphExecutionReplay } from '@/components/chat/graph-execution-replay';
@@ -10,6 +11,8 @@ import { GraphVisualization } from '@/components/chat/graph-visualization';
 import { GuardrailsPanel } from '@/components/chat/guardrails-panel';
 import { HumanApprovalPanel } from '@/components/chat/human-approval-panel';
 import { MemoryPanel } from '@/components/chat/memory-panel';
+import { MultiAgentDashboard } from '@/components/chat/multi-agent-dashboard';
+import { OutputComparisonView } from '@/components/chat/output-comparison-view';
 import { PromptPreviewPanel } from '@/components/chat/prompt-preview-panel';
 import { RetrievalTimeline } from '@/components/chat/retrieval-timeline';
 import { citationAnchorId, SourcesPanel } from '@/components/chat/sources-panel';
@@ -122,6 +125,7 @@ export function MessageBubble({ message, sessionId, onApproveGraph }: MessageBub
             (message.toolCalls && message.toolCalls.length > 0) ||
             (message.agentSteps && message.agentSteps.length > 0) ||
             (message.graphNodes && message.graphNodes.length > 0) ||
+            (message.agentTurns && message.agentTurns.length > 0) ||
             message.pendingApproval ||
             message.latencyMs !== undefined) && (
             <div className="flex w-full flex-col gap-2 px-1">
@@ -158,6 +162,14 @@ export function MessageBubble({ message, sessionId, onApproveGraph }: MessageBub
                 onDecision={(approved, feedback) =>
                   onApproveGraph?.(message.id, approved, feedback)
                 }
+              />
+              <MultiAgentDashboard turns={message.agentTurns} />
+              <AgentCommunicationTimeline
+                communicationLog={message.multiAgentRun?.communicationLog}
+              />
+              <OutputComparisonView
+                draftHistory={message.multiAgentRun?.draftHistory}
+                reviewHistory={message.multiAgentRun?.reviewHistory}
               />
               <GuardrailsPanel guardrails={message.guardrails} />
               <UsageBadges

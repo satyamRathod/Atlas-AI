@@ -9,221 +9,221 @@ Engine - **apps/web** --- AI Playground
 
 ### Backend
 
--   LangChain setup
--   Chat model (Groq)
--   Prompt templates
--   LCEL
--   SSE streaming
--   Conversation history
--   Document loaders
--   Text splitters
--   Local embeddings
--   Qdrant
--   Indexing CLI
--   Retriever
--   Basic RAG
--   Citations
--   Logging
+- LangChain setup
+- Chat model (Groq)
+- Prompt templates
+- LCEL
+- SSE streaming
+- Conversation history
+- Document loaders
+- Text splitters
+- Local embeddings
+- Qdrant
+- Indexing CLI
+- Retriever
+- Basic RAG
+- Citations
+- Logging
 
 ### UI
 
--   Chat interface
--   Streaming UI
--   Markdown rendering
--   Conversation history
--   Retrieved chunks
--   Citations
--   Token usage
--   Latency
--   Prompt preview
+- Chat interface
+- Streaming UI
+- Markdown rendering
+- Conversation history
+- Retrieved chunks
+- Citations
+- Token usage
+- Latency
+- Prompt preview
 
 ## Phase 2 --- Advanced RAG
 
 ### Backend
 
--   Hybrid Search
--   BM25
--   RRF
--   MMR
--   Cross-encoder reranking
--   Parent document retrieval
--   Multi-query retrieval
--   Context compression
--   Self-query retriever
--   Metadata filtering
--   Query expansion
+- Hybrid Search
+- BM25
+- RRF
+- MMR
+- Cross-encoder reranking
+- Parent document retrieval
+- Multi-query retrieval
+- Context compression
+- Self-query retriever
+- Metadata filtering
+- Query expansion
 
 ### UI
 
--   Retrieval strategy switcher
--   Chunk comparison
--   Similarity scores
--   Metadata filters
--   Source preview
--   Retrieval timeline
+- Retrieval strategy switcher
+- Chunk comparison
+- Similarity scores
+- Metadata filters
+- Source preview
+- Retrieval timeline
 
 ## Phase 3 --- Memory
 
 ### Backend
 
--   Conversation memory
--   Token budgeting
--   Context trimming
--   Conversation summaries
--   Long-term memory
--   Semantic memory
--   Vector memory
+- Conversation memory
+- Token budgeting
+- Context trimming
+- Conversation summaries
+- Long-term memory
+- Semantic memory
+- Vector memory
 
 ### UI
 
--   Memory inspector
--   Summary viewer
--   Context window visualization
--   Token budget panel
+- Memory inspector
+- Summary viewer
+- Context window visualization
+- Token budget panel
 
 ## Phase 4 --- Prompt Engineering
 
 ### Backend
 
--   Dynamic prompts
--   Few-shot
--   Structured output
--   JSON mode
--   Output parsers
--   Guardrails
--   Prompt versioning
+- Dynamic prompts
+- Few-shot
+- Structured output
+- JSON mode
+- Output parsers
+- Guardrails
+- Prompt versioning
 
 ### UI
 
--   Prompt editor
--   Prompt comparison
--   Variable inspector
--   Structured output viewer
+- Prompt editor
+- Prompt comparison
+- Variable inspector
+- Structured output viewer
 
 ## Phase 5 --- Tools
 
 ### Backend
 
--   Calculator tool
--   Weather tool
--   File search
--   Database tool
--   Custom tools
--   Tool execution
--   Error handling
+- Calculator tool
+- Weather tool
+- File search
+- Database tool
+- Custom tools
+- Tool execution
+- Error handling
 
 ### UI
 
--   Tool timeline
--   Tool input/output
--   Tool latency
--   Tool status
+- Tool timeline
+- Tool input/output
+- Tool latency
+- Tool status
 
 ## Phase 6 --- Agents
 
 ### Backend
 
--   ReAct
--   Planning
--   Observation
--   Multi-tool agents
+- ReAct
+- Planning
+- Observation
+- Multi-tool agents
 
 ### UI
 
--   Agent reasoning timeline
--   Planning view
--   Intermediate outputs
+- Agent reasoning timeline
+- Planning view
+- Intermediate outputs
 
 ## Phase 7 --- LangGraph
 
 ### Backend
 
--   State
--   Nodes
--   Edges
--   Conditional routing
--   Checkpoints
--   Human approval
--   Interrupt/resume
+- State
+- Nodes
+- Edges
+- Conditional routing
+- Checkpoints
+- Human approval
+- Interrupt/resume
 
 ### UI
 
--   Graph visualization
--   Node highlighting
--   State inspector
--   Execution replay
+- Graph visualization
+- Node highlighting
+- State inspector
+- Execution replay
 
 ## Phase 8 --- Multi-Agent
 
 ### Backend
 
--   Planner
--   Researcher
--   Writer
--   Reviewer
--   Coordinator
--   Shared state
+- Planner
+- Researcher
+- Writer
+- Reviewer
+- Coordinator
+- Shared state
 
 ### UI
 
--   Multi-agent dashboard
--   Agent communication timeline
--   Output comparison
+- Multi-agent dashboard
+- Agent communication timeline
+- Output comparison
 
 ## Phase 9 --- Evaluation
 
 ### Backend
 
--   Faithfulness
--   Precision
--   Recall
--   Hallucination detection
--   Benchmarks
+- Faithfulness
+- Precision
+- Recall
+- Hallucination detection
+- Benchmarks
 
 ### UI
 
--   Evaluation dashboard
--   Scorecards
--   Benchmark comparison
+- Evaluation dashboard
+- Scorecards
+- Benchmark comparison
 
 ## Phase 10 --- Observability
 
 ### Backend
 
--   Prompt logging
--   Token tracking
--   Cost tracking
--   Latency
--   Tracing
--   Retrieval metrics
+- Prompt logging
+- Token tracking
+- Cost tracking
+- Latency
+- Tracing
+- Retrieval metrics
 
 ### UI
 
--   Monitoring dashboard
--   Prompt explorer
--   Token & cost charts
--   Request inspector
+- Monitoring dashboard
+- Prompt explorer
+- Token & cost charts
+- Request inspector
 
 ## Phase 11 --- Production
 
 ### Backend
 
--   Authentication
--   Rate limiting
--   Caching
--   Retries
--   Timeouts
--   Incremental indexing
--   Docker
--   Kubernetes
--   Metrics
+- Authentication
+- Rate limiting
+- Caching
+- Retries
+- Timeouts
+- Incremental indexing
+- Docker
+- Kubernetes
+- Metrics
 
 ### UI
 
--   Admin dashboard
--   Background jobs
--   Index status
--   System health
+- Admin dashboard
+- Background jobs
+- Index status
+- System health
 
 ## Phase 12 --- Capstone
 
@@ -240,24 +240,29 @@ Single AI Playground demonstrating every capability with visualizations.
 
 ### Backend
 
--   MCP
--   Multiple LLM providers
--   Semantic cache
--   Redis
--   PostgreSQL
--   Voice
--   Images
--   Workflows
+- MCP
+- Multiple LLM providers
+- Semantic cache
+- Redis
+- PostgreSQL
+- Voice
+- Images
+- Workflows
 
 ### UI
 
--   Embedding explorer
--   Vector explorer
--   Document ingestion
--   Knowledge graph
--   Mobile support
+- Embedding explorer
+- Vector explorer
+- Document ingestion
+- Knowledge graph
+- Mobile support
 
 ## Final Outcome
 
 A portfolio-quality full-stack AI platform showcasing modern AI
 engineering.
+
+## concepts to validate
+
+transformers,
+looping

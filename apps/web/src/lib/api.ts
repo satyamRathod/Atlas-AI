@@ -32,9 +32,9 @@ function buildPromptFields(promptSettings?: PromptSettings) {
 
 /**
  * Adds the tools settings bar's fields (Phase 5, extended for Phase 6's
- * `useAgent` and Phase 7's `useGraph`). `enabledTools: []` means "all
- * registered tools" — omitted on the wire so the backend's own default
- * applies.
+ * `useAgent`, Phase 7's `useGraph`, and Phase 8's `useMultiAgent`).
+ * `enabledTools: []` means "all registered tools" — omitted on the wire so
+ * the backend's own default applies.
  */
 function buildToolFields(toolSettings?: ToolSettings) {
   if (!toolSettings) return {};
@@ -44,6 +44,7 @@ function buildToolFields(toolSettings?: ToolSettings) {
     ...(toolSettings.enabledTools.length > 0 ? { enabledTools: toolSettings.enabledTools } : {}),
     useAgent: toolSettings.useAgent,
     useGraph: toolSettings.useGraph,
+    useMultiAgent: toolSettings.useMultiAgent,
   };
 }
 
@@ -91,6 +92,8 @@ export interface StreamChatHandlers {
   onGraphNodeStart?: (chunk: StreamChunk) => void;
   onGraphNodeEnd?: (chunk: StreamChunk) => void;
   onGraphInterrupt?: (chunk: StreamChunk) => void;
+  onAgentTurnStart?: (chunk: StreamChunk) => void;
+  onAgentTurnEnd?: (chunk: StreamChunk) => void;
   onDone?: (chunk: StreamChunk) => void;
   onError?: (chunk: StreamChunk | { message: string }) => void;
 }
@@ -110,6 +113,19 @@ function attachGraphListeners(source: EventSource, handlers: StreamChatHandlers)
   source.addEventListener('graph_interrupt', (event) => {
     handlers.onGraphInterrupt?.(parse(event as MessageEvent<string>));
     source.close();
+  });
+}
+
+/** Wires the multi-agent-mode (Phase 8) SSE event listeners onto an already-open `EventSource` — there's no resume endpoint to share this with (a multi-agent turn never pauses), so this is only used by `streamChatMessage()`. */
+function attachMultiAgentListeners(source: EventSource, handlers: StreamChatHandlers): void {
+  const parse = (event: MessageEvent<string>): StreamChunk => JSON.parse(event.data) as StreamChunk;
+
+  source.addEventListener('agent_turn_start', (event) => {
+    handlers.onAgentTurnStart?.(parse(event as MessageEvent<string>));
+  });
+
+  source.addEventListener('agent_turn_end', (event) => {
+    handlers.onAgentTurnEnd?.(parse(event as MessageEvent<string>));
   });
 }
 
@@ -161,6 +177,7 @@ export function streamChatMessage(
     }
     params.set('useAgent', String(toolSettings.useAgent));
     params.set('useGraph', String(toolSettings.useGraph));
+    params.set('useMultiAgent', String(toolSettings.useMultiAgent));
   }
 
   const source = new EventSource(`${API_BASE_URL}/api/v1/chat/stream?${params.toString()}`);
@@ -196,6 +213,7 @@ export function streamChatMessage(
   });
 
   attachGraphListeners(source, handlers);
+  attachMultiAgentListeners(source, handlers);
 
   source.addEventListener('done', (event) => {
     handlers.onDone?.(parse(event as MessageEvent<string>));
@@ -298,3 +316,48 @@ export async function getGraphStateHistory(
 
 /** Re-exported so `graph-visualization.tsx`/`graph-execution-replay.tsx` don't need a second import path just for the shared node-status shape. */
 export type { GraphNodeInfo };
+
+/** The static topology `GET /api/v1/multi-agent` returns — mirrors `GraphDefinition` above, one entry per `AgentRole`. */
+export interface MultiAgentDefinition {
+  nodes: readonly { id: string; name: string }[];
+  edges: readonly { source: string; target: string; conditional: boolean }[];
+}
+
+export async function getMultiAgentDefinition(): Promise<MultiAgentDefinition> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/multi-agent`);
+  if (!res.ok) {
+    throw new Error(`Failed to load multi-agent definition (status ${res.status})`);
+  }
+  return res.json() as Promise<MultiAgentDefinition>;
+}
+
+/** One checkpoint in a turn's thread history, as `GET /api/v1/multi-agent/state/:threadId` returns it. */
+export interface MultiAgentCheckpointSummary {
+  checkpointId?: string;
+  next: readonly string[];
+  createdAt?: string;
+  roundCount: number;
+  planLength: number;
+  researchNoteCount: number;
+  draftCount: number;
+  reviewCount: number;
+}
+
+/**
+ * Takes the *full* per-turn `threadId` from `MultiAgentRunInfo.threadId`
+ * (`magent:{sessionId}:{uuid}`), not the bare chat session id — unlike
+ * `getGraphStateHistory()`, since Phase 8 mints a fresh checkpoint thread
+ * per turn instead of reusing one thread across a whole session.
+ */
+export async function getMultiAgentStateHistory(
+  threadId: string,
+): Promise<readonly MultiAgentCheckpointSummary[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/multi-agent/state/${encodeURIComponent(threadId)}`,
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load multi-agent state history (status ${res.status})`);
+  }
+  const data = (await res.json()) as { checkpoints: MultiAgentCheckpointSummary[] };
+  return data.checkpoints;
+}

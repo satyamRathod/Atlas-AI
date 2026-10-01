@@ -4,6 +4,7 @@ import type { AgentRunInfo, AgentStepInfo, AgentStepStart } from '@/langchain/ag
 import type { GraphNodeInfo, GraphRunInfo, PendingApprovalInfo } from '@/langchain/graph/index.js';
 import type { GuardrailReport } from '@/langchain/guardrails/index.js';
 import type { MemoryInfo } from '@/langchain/memory/index.js';
+import type { MultiAgentRunInfo, MultiAgentTurnInfo } from '@/langchain/multi-agent/index.js';
 import type { StructuredAnswer } from '@/langchain/parsers/index.js';
 import type { AdvancedRetrieveOptions, RetrievalStageTiming } from '@/langchain/retrieval/index.js';
 import type { ToolCallInfo, ToolCallStart } from '@/langchain/tools/index.js';
@@ -88,6 +89,15 @@ export interface ChatResponse {
    * `POST /api/v1/chat/graph/resume`.
    */
   graphRun?: GraphRunInfo;
+  /**
+   * Present only when the request asked for `useMultiAgent: true` (§1/§4 of
+   * docs/phases/phase-8-multi-agent.md) — the full supervisor-graph run:
+   * every specialist visit, the final plan/research/draft/review history,
+   * and the coordinator's communication log. Unlike `graphRun`, a
+   * multi-agent turn never pauses — it always runs to completion and is
+   * recorded to history in the same call.
+   */
+  multiAgentRun?: MultiAgentRunInfo;
   usage?: UsageMetadata;
 }
 
@@ -102,6 +112,8 @@ export type StreamChunkType =
   | 'graph_node_start'
   | 'graph_node_end'
   | 'graph_interrupt'
+  | 'agent_turn_start'
+  | 'agent_turn_end'
   | 'done'
   | 'error';
 
@@ -154,6 +166,15 @@ export interface StreamChunk {
   graphNode?: GraphNodeInfo;
   graphInterrupt?: PendingApprovalInfo;
   graphRun?: GraphRunInfo;
+  /**
+   * `agent_turn_start`/`agent_turn_end` are Phase 8's analogue of the live
+   * per-step events above, one per specialist visit. There's no
+   * `_interrupt` counterpart — a multi-agent turn never pauses, so `done`
+   * always follows and carries the full `multiAgentRun` for
+   * reconciliation.
+   */
+  agentTurn?: MultiAgentTurnInfo;
+  multiAgentRun?: MultiAgentRunInfo;
   model?: string;
   usage?: UsageMetadata;
   message?: string;

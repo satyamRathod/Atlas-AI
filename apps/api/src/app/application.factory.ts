@@ -9,6 +9,11 @@ import {
   GraphAgentRunner,
 } from '@/langchain/graph/index.js';
 import { createSemanticMemoryStore, SemanticMemoryStore } from '@/langchain/memory/index.js';
+import {
+  buildMultiAgentGraph,
+  createMultiAgentCheckpointer,
+  MultiAgentRunner,
+} from '@/langchain/multi-agent/index.js';
 import { createAdvancedRetriever } from '@/langchain/retrieval/index.js';
 import {
   connectParentDocumentRetriever,
@@ -29,6 +34,7 @@ import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
 import { RedisChatMemoryStore } from '../modules/chat/infrastructure/redis-chat-memory-store.js';
 import { GraphController } from '../modules/graph/graph.controller.js';
+import { MultiAgentController } from '../modules/multi-agent/multi-agent.controller.js';
 import { RedisPromptStore } from '../modules/prompts/infrastructure/redis-prompt-store.js';
 import { PromptController } from '../modules/prompts/prompt.controller.js';
 import { PromptService } from '../modules/prompts/prompt.service.js';
@@ -165,6 +171,26 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 8 — Multi-Agent
+   |--------------------------------------------------------------------------
+   | Same `toolExecutor` as Phase 5/6/7 once more — only the researcher
+   | specialist calls tools. Its own Redis-backed checkpointer (own TTL,
+   | own `magent:{sessionId}` thread namespace) keeps it fully separate from
+   | Phase 7's graph checkpoints. See docs/phases/phase-8-multi-agent.md.
+   */
+
+  const multiAgentCheckpointer = await createMultiAgentCheckpointer();
+  const compiledMultiAgentGraph = buildMultiAgentGraph({
+    chatModel,
+    toolExecutor,
+    checkpointer: multiAgentCheckpointer,
+    maxRounds: env.MULTI_AGENT_MAX_ROUNDS,
+    researcherMaxToolCalls: env.MULTI_AGENT_RESEARCHER_MAX_TOOL_CALLS,
+  });
+  const multiAgentRunner = new MultiAgentRunner(compiledMultiAgentGraph);
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
@@ -177,6 +203,7 @@ export async function buildApplication(): Promise<Application> {
     toolExecutor,
     reactAgentRunner,
     graphAgentRunner,
+    multiAgentRunner,
     semanticMemoryStore,
   );
 
@@ -190,6 +217,7 @@ export async function buildApplication(): Promise<Application> {
   const promptController = new PromptController(promptService);
   const toolsController = new ToolsController(toolExecutor);
   const graphController = new GraphController(compiledAgentGraph);
+  const multiAgentController = new MultiAgentController(compiledMultiAgentGraph);
 
   /*
    |--------------------------------------------------------------------------
@@ -202,6 +230,7 @@ export async function buildApplication(): Promise<Application> {
     promptController,
     toolsController,
     graphController,
+    multiAgentController,
   });
 
   /*

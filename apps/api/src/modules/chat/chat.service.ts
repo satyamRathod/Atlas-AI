@@ -36,6 +36,11 @@ import {
   type TokenBudgetPlan,
   trimHistory,
 } from '@/langchain/memory/index.js';
+import type {
+  MultiAgentLoopEvent,
+  MultiAgentRunInfo,
+  MultiAgentRunner,
+} from '@/langchain/multi-agent/index.js';
 import { STRUCTURED_ANSWER_SCHEMA, type StructuredAnswer } from '@/langchain/parsers/index.js';
 import { buildDynamicPrompt } from '@/langchain/prompts/index.js';
 import type { RetrievalPipeline, RetrievalStrategy } from '@/langchain/retrieval/index.js';
@@ -97,9 +102,15 @@ interface AgentSelection {
   enabledTools?: string[] | undefined;
 }
 
-/** Whether this turn should run the LangGraph agent<->tools graph instead, and which registered tools it may use (§2 of docs/phases/phase-7-langgraph.md). Takes precedence over every other mode when `true`. */
+/** Whether this turn should run the LangGraph agent<->tools graph instead, and which registered tools it may use (§2 of docs/phases/phase-7-langgraph.md). Takes precedence over every mode below when `true`. */
 interface GraphSelection {
   useGraph: boolean;
+  enabledTools?: string[] | undefined;
+}
+
+/** Whether this turn should run the Phase 8 supervisor graph instead, and which registered tools the researcher specialist may use (§1/§4 of docs/phases/phase-8-multi-agent.md). Highest precedence of all modes when `true`. */
+interface MultiAgentSelection {
+  useMultiAgent: boolean;
   enabledTools?: string[] | undefined;
 }
 
@@ -147,6 +158,21 @@ interface GraphLoopResult {
   resumedTurnMeta?: GraphTurnMeta;
 }
 
+/**
+ * What `generateWithMultiAgent()` resolves to once the coordinator decides
+ * to finish. Unlike `GraphLoopResult`, there's no `interrupted` flag or
+ * resume path — a multi-agent turn always runs to completion in one call
+ * (§1 of docs/phases/phase-8-multi-agent.md). `usage` is never populated:
+ * a turn makes several LLM calls across different roles with no single
+ * terminal response to attribute token usage to, so aggregating it was
+ * left out of scope.
+ */
+interface MultiAgentLoopResult {
+  reply: string;
+  usage?: ChatResponse['usage'];
+  multiAgentRun: MultiAgentRunInfo;
+}
+
 const GUARDRAIL_REFUSAL_TEXT =
   "I can't help with that request — it was flagged by an input safety check, so I didn't generate a response.";
 
@@ -167,6 +193,7 @@ export class ChatService {
     private readonly toolExecutor: ToolExecutor,
     private readonly reactAgentRunner: ReactAgentRunner,
     private readonly graphAgentRunner: GraphAgentRunner,
+    private readonly multiAgentRunner: MultiAgentRunner,
     private readonly semanticMemoryStore?: SemanticMemoryStore,
   ) {}
 
@@ -176,6 +203,7 @@ export class ChatService {
     const toolSelection = toToolSelection(request);
     const agentSelection = toAgentSelection(request);
     const graphSelection = toGraphSelection(request);
+    const multiAgentSelection = toMultiAgentSelection(request);
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -232,6 +260,7 @@ export class ChatService {
       toolSelection,
       agentSelection,
       graphSelection,
+      multiAgentSelection,
       sessionId,
       turnMeta,
     );
@@ -265,7 +294,8 @@ export class ChatService {
       isStructuredOutput:
         selection.structuredOutput ||
         (generation.toolCalls?.length ?? 0) > 0 ||
-        generation.agentRun !== undefined,
+        generation.agentRun !== undefined ||
+        generation.multiAgentRun !== undefined,
     });
 
     return {
@@ -281,6 +311,9 @@ export class ChatService {
       ...(generation.toolCalls !== undefined ? { toolCalls: generation.toolCalls } : {}),
       ...(generation.agentRun !== undefined ? { agentRun: generation.agentRun } : {}),
       ...(generation.graphRun !== undefined ? { graphRun: generation.graphRun } : {}),
+      ...(generation.multiAgentRun !== undefined
+        ? { multiAgentRun: generation.multiAgentRun }
+        : {}),
       ...(generation.usage ? { usage: generation.usage } : {}),
     };
   }
@@ -350,6 +383,7 @@ export class ChatService {
     enabledTools,
     useAgent,
     useGraph,
+    useMultiAgent,
     options,
   }: {
     message: string;
@@ -363,6 +397,7 @@ export class ChatService {
     enabledTools?: string[];
     useAgent?: boolean;
     useGraph?: boolean;
+    useMultiAgent?: boolean;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
     const sid = sessionId ?? randomUUID();
@@ -375,6 +410,10 @@ export class ChatService {
     const toolSelection: ToolSelection = { useTools: useTools ?? false, enabledTools };
     const agentSelection: AgentSelection = { useAgent: useAgent ?? false, enabledTools };
     const graphSelection: GraphSelection = { useGraph: useGraph ?? false, enabledTools };
+    const multiAgentSelection: MultiAgentSelection = {
+      useMultiAgent: useMultiAgent ?? false,
+      enabledTools,
+    };
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -429,8 +468,30 @@ export class ChatService {
     let toolCallsInfo: ToolCallInfo[] | undefined;
     let agentRunInfo: AgentRunInfo | undefined;
     let graphRunInfo: GraphRunInfo | undefined;
+    let multiAgentRunInfo: MultiAgentRunInfo | undefined;
 
-    if (graphSelection.useGraph) {
+    if (multiAgentSelection.useMultiAgent) {
+      // Same non-streaming-internally, live-events-forwarded shape as the
+      // graph/agent/tool branches below — the final answer is
+      // token-streamed as one chunk, real-time progress instead comes from
+      // the `agent_turn_start`/`agent_turn_end` events (§1/§4 of
+      // docs/phases/phase-8-multi-agent.md).
+      const loop = this.generateWithMultiAgent(chainInput, sid, multiAgentSelection);
+      let step = await loop.next();
+
+      while (!step.done) {
+        const event = step.value;
+        yield { type: event.type, sessionId: sid, agentTurn: event.turn };
+        step = await loop.next();
+      }
+
+      const result = step.value;
+      fullText = result.reply;
+      usage = result.usage;
+      multiAgentRunInfo = result.multiAgentRun;
+
+      yield { type: 'token', sessionId: sid, text: fullText };
+    } else if (graphSelection.useGraph) {
       const turnMeta: GraphTurnMeta = {
         question: message,
         citations,
@@ -567,7 +628,8 @@ export class ChatService {
       isStructuredOutput:
         selection.structuredOutput ||
         (toolCallsInfo?.length ?? 0) > 0 ||
-        agentRunInfo !== undefined,
+        agentRunInfo !== undefined ||
+        multiAgentRunInfo !== undefined,
     });
 
     yield {
@@ -581,6 +643,7 @@ export class ChatService {
       ...(toolCallsInfo !== undefined ? { toolCalls: toolCallsInfo } : {}),
       ...(agentRunInfo !== undefined ? { agentRun: agentRunInfo } : {}),
       ...(graphRunInfo !== undefined ? { graphRun: graphRunInfo } : {}),
+      ...(multiAgentRunInfo !== undefined ? { multiAgentRun: multiAgentRunInfo } : {}),
       ...(usage ? { usage } : {}),
     };
   }
@@ -656,6 +719,7 @@ export class ChatService {
     toolSelection: ToolSelection,
     agentSelection: AgentSelection,
     graphSelection: GraphSelection,
+    multiAgentSelection: MultiAgentSelection,
     sessionId: string,
     turnMeta: GraphTurnMeta,
   ): Promise<{
@@ -665,10 +729,21 @@ export class ChatService {
     toolCalls?: ToolCallInfo[];
     agentRun?: AgentRunInfo;
     graphRun?: GraphRunInfo;
+    multiAgentRun?: MultiAgentRunInfo;
   }> {
-    // Mutually exclusive per turn — useGraph > useAgent > useTools >
-    // structuredOutput if more than one is requested (§2 of
-    // docs/phases/phase-7-langgraph.md).
+    // Mutually exclusive per turn — useMultiAgent > useGraph > useAgent >
+    // useTools > structuredOutput if more than one is requested (§4 of
+    // docs/phases/phase-8-multi-agent.md).
+    if (multiAgentSelection.useMultiAgent) {
+      const loop = this.generateWithMultiAgent(chainInput, sessionId, multiAgentSelection);
+      let step = await loop.next();
+      while (!step.done) {
+        step = await loop.next();
+      }
+      const result = step.value;
+      return { reply: result.reply, usage: result.usage, multiAgentRun: result.multiAgentRun };
+    }
+
     if (graphSelection.useGraph) {
       const loop = this.generateWithGraph(chainInput, sessionId, graphSelection, turnMeta);
       const result = await this.drainGraphLoop(loop);
@@ -832,6 +907,42 @@ export class ChatService {
     );
 
     return yield* this.toGraphLoopResult(loop, sessionId);
+  }
+
+  /**
+   * The Phase 8 supervisor-graph loop (§1/§4 of
+   * docs/phases/phase-8-multi-agent.md) — delegates to
+   * `MultiAgentRunner.run()`, forwarding its live `agent_turn_start`/
+   * `agent_turn_end` events unchanged. Simpler than `generateWithGraph()`:
+   * there's no interrupt branch to wrap, since a multi-agent turn always
+   * runs to completion in one call. Only forwards `context`/`summary`/
+   * `memory` from `chainInput` (not `history`) — same documented
+   * simplification as `generateWithAgent()`/`generateWithGraph()`.
+   */
+  private async *generateWithMultiAgent(
+    chainInput: RagChainInput,
+    sessionId: string,
+    multiAgentSelection: MultiAgentSelection,
+  ): AsyncGenerator<MultiAgentLoopEvent, MultiAgentLoopResult, void> {
+    const loop = this.multiAgentRunner.run(
+      {
+        question: chainInput.question,
+        context: chainInput.context,
+        summary: chainInput.summary,
+        memory: chainInput.memory,
+      },
+      sessionId,
+      multiAgentSelection.enabledTools,
+    );
+
+    let step = await loop.next();
+    while (!step.done) {
+      yield step.value;
+      step = await loop.next();
+    }
+
+    const result = step.value;
+    return { reply: result.reply, multiAgentRun: result.multiAgentRun };
   }
 
   /** Resumes a paused run (§4) — same wrapping as `generateWithGraph()` above, just against `GraphAgentRunner.resume()` instead of `.run()`. */
@@ -1321,6 +1432,18 @@ interface GraphSelectionSource {
 function toGraphSelection(request: GraphSelectionSource): GraphSelection {
   return {
     useGraph: request.useGraph ?? false,
+    enabledTools: request.enabledTools,
+  };
+}
+
+interface MultiAgentSelectionSource {
+  useMultiAgent?: boolean | undefined;
+  enabledTools?: string[] | undefined;
+}
+
+function toMultiAgentSelection(request: MultiAgentSelectionSource): MultiAgentSelection {
+  return {
+    useMultiAgent: request.useMultiAgent ?? false,
     enabledTools: request.enabledTools,
   };
 }

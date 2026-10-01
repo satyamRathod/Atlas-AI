@@ -279,6 +279,68 @@ export interface GraphNodeDisplay extends GraphNodeInfo {
   step: number;
 }
 
+/** The five roles in the Phase 8 supervisor graph. Mirrors `AgentRole` in apps/api/src/langchain/multi-agent/multi-agent.types.ts — doubles as the compiled graph's node names. */
+export type AgentRole = 'coordinator' | 'planner' | 'researcher' | 'writer' | 'reviewer';
+
+/** One researcher visit's findings. Mirrors `ResearchNote`. */
+export interface ResearchNote {
+  round: number;
+  content: string;
+  toolCalls: readonly ToolCallInfo[];
+}
+
+/** One writer visit's draft — every entry is kept, powering the Output Comparison view. Mirrors `DraftVersion`. */
+export interface DraftVersion {
+  round: number;
+  content: string;
+}
+
+/** One reviewer visit's verdict on the draft at the time it ran. Mirrors `ReviewVerdict`. */
+export interface ReviewVerdict {
+  round: number;
+  approved: boolean;
+  feedback?: string;
+}
+
+/** One entry in the coordinator's dispatch log — powers the Agent Communication Timeline. Mirrors `AgentMessage`. */
+export interface AgentMessage {
+  round: number;
+  from: AgentRole;
+  to: AgentRole | 'finish';
+  content: string;
+}
+
+/** One role's visit for a single pass through the graph this turn. Mirrors `MultiAgentTurnInfo`. */
+export interface MultiAgentTurnInfo {
+  role: AgentRole;
+  round: number;
+  status: 'running' | 'success' | 'error';
+  durationMs?: number;
+}
+
+/**
+ * A specialist/coordinator visit as rendered in the live dashboard/
+ * timeline — a UI-only superset of `MultiAgentTurnInfo` that gives every
+ * pass through the same role a stable React key (the same role, e.g.
+ * `coordinator`, legitimately visits more than once per turn).
+ */
+export interface MultiAgentTurnDisplay extends MultiAgentTurnInfo {
+  /** Position in the overall turn sequence for this run (0-based). */
+  step: number;
+}
+
+/** The full supervisor-graph run for one turn. Mirrors `MultiAgentRunInfo`. */
+export interface MultiAgentRunInfo {
+  turns: readonly MultiAgentTurnInfo[];
+  plan: readonly string[];
+  researchNotes: readonly ResearchNote[];
+  draftHistory: readonly DraftVersion[];
+  reviewHistory: readonly ReviewVerdict[];
+  communicationLog: readonly AgentMessage[];
+  /** This turn's own checkpointer thread id (`magent:{sessionId}:{uuid}`) — a fresh thread per turn, unlike Phase 7's `graphRun.threadId` which reuses the chat session id. */
+  threadId: string;
+}
+
 export interface ChatResponse {
   sessionId: string;
   reply: string;
@@ -295,6 +357,8 @@ export interface ChatResponse {
   agentRun?: AgentRunInfo;
   /** Present only when the request asked for `useGraph: true` (Phase 7). When `graphRun.interrupted` is `true`, `reply` is a placeholder and `graphRun.pendingApproval` describes what's being asked. */
   graphRun?: GraphRunInfo;
+  /** Present only when the request asked for `useMultiAgent: true` (Phase 8). Unlike `graphRun`, a multi-agent turn never pauses — it always runs to completion in the same call. */
+  multiAgentRun?: MultiAgentRunInfo;
   usage?: ChatUsage;
 }
 
@@ -309,6 +373,8 @@ export type StreamChunkType =
   | 'graph_node_start'
   | 'graph_node_end'
   | 'graph_interrupt'
+  | 'agent_turn_start'
+  | 'agent_turn_end'
   | 'done'
   | 'error';
 
@@ -343,6 +409,15 @@ export interface StreamChunk {
   graphNode?: GraphNodeInfo;
   graphInterrupt?: PendingApprovalInfo;
   graphRun?: GraphRunInfo;
+  /**
+   * `agent_turn_start`/`agent_turn_end` are Phase 8's analogue of the live
+   * per-step events above, one per specialist/coordinator visit. There's
+   * no `_interrupt` counterpart — a multi-agent turn never pauses, so
+   * `done` always follows and carries the full `multiAgentRun` for
+   * reconciliation.
+   */
+  agentTurn?: MultiAgentTurnInfo;
+  multiAgentRun?: MultiAgentRunInfo;
   model?: string;
   usage?: ChatUsage;
   message?: string;
@@ -386,7 +461,10 @@ export interface PromptSettings {
  * `useAgent` (Phase 6) shares the same `enabledTools` list but opts into
  * the classic text-based ReAct loop instead — it wins if both are `true`.
  * `useGraph` (Phase 7) shares it too and wins over both — same precedence
- * the backend documents (`useGraph > useAgent > useTools`).
+ * the backend documents (`useGraph > useAgent > useTools`). `useMultiAgent`
+ * (Phase 8) shares it too and wins over all three (`useMultiAgent >
+ * useGraph > useAgent > useTools`), scoping which tools the `researcher`
+ * specialist may call.
  */
 export interface ToolSettings {
   useTools: boolean;
@@ -394,6 +472,7 @@ export interface ToolSettings {
   enabledTools: string[];
   useAgent: boolean;
   useGraph: boolean;
+  useMultiAgent: boolean;
 }
 
 export interface ChatMessage {
@@ -417,6 +496,10 @@ export interface ChatMessage {
   graphNodes?: readonly GraphNodeDisplay[];
   /** Set by `graph_interrupt`, cleared once `approveGraphRun()` resumes the turn. */
   pendingApproval?: PendingApprovalInfo;
+  /** Live during streaming (populated as `agent_turn_start`/`agent_turn_end` events arrive), reconciled on `done`. */
+  agentTurns?: readonly MultiAgentTurnDisplay[];
+  /** Set once `done` carries a `multiAgentRun` — the dashboard/timeline/comparison views' data source for plan/research/draft/review history. */
+  multiAgentRun?: MultiAgentRunInfo;
   usage?: ChatUsage;
   model?: string;
   /** Wall-clock time from request start to the `done` event, in ms. */

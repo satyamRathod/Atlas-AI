@@ -46,6 +46,12 @@ export const chatRequestSchema = z.object({
   // other mode: useGraph > useAgent > useTools > structuredOutput (§2 of
   // docs/phases/phase-7-langgraph.md).
   useGraph: z.boolean().optional(),
+  // Multi-Agent (Phase 8) — `useMultiAgent` opts into the supervisor graph
+  // (coordinator routing between planner/researcher/writer/reviewer),
+  // reusing `enabledTools` for the researcher specialist. Highest
+  // precedence of all modes: useMultiAgent > useGraph > useAgent >
+  // useTools > structuredOutput (§4 of docs/phases/phase-8-multi-agent.md).
+  useMultiAgent: z.boolean().optional(),
 });
 
 export type ChatRequestInput = z.infer<typeof chatRequestSchema>;
@@ -113,6 +119,7 @@ export const chatStreamQuerySchema = z.object({
     ),
   useAgent: booleanQueryParam,
   useGraph: booleanQueryParam,
+  useMultiAgent: booleanQueryParam,
 });
 
 export type ChatStreamQueryInput = z.infer<typeof chatStreamQuerySchema>;

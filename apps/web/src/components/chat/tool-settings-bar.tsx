@@ -1,4 +1,4 @@
-import { GitBranch, Info, RotateCcw, Sparkles, Wrench } from 'lucide-react';
+import { GitBranch, Info, RotateCcw, Sparkles, Users, Wrench } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -36,13 +36,16 @@ function toggleTool(
 }
 
 /**
- * Tools settings bar (Phase 5 UI, extended for Phase 6 and Phase 7) — a
+ * Tools settings bar (Phase 5 UI, extended for Phase 6, 7, and 8) — a
  * master `Switch` for `useTools` (native tool-calling), a second master
- * `Switch` for `useAgent` (the classic text-based ReAct loop), and a third
- * for `useGraph` (the LangGraph `StateGraph` with a human-approval gate),
- * sharing one set of per-tool `Switch` rows below (fetched from
- * `GET /api/v1/tools`) so `enabledTools` never hardcodes tool names
- * client-side and doesn't need a third, duplicate settings bar.
+ * `Switch` for `useAgent` (the classic text-based ReAct loop), a third for
+ * `useGraph` (the LangGraph `StateGraph` with a human-approval gate), and
+ * a fourth for `useMultiAgent` (the supervisor graph — coordinator routing
+ * between planner/researcher/writer/reviewer), sharing one set of per-tool
+ * `Switch` rows below (fetched from `GET /api/v1/tools`) so `enabledTools`
+ * never hardcodes tool names client-side and doesn't need a fourth,
+ * duplicate settings bar. `enabledTools` scopes which tools the
+ * `researcher` specialist may call when `useMultiAgent` is on.
  */
 export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBarProps) {
   const [tools, setTools] = useState<ToolDefinition[]>([]);
@@ -59,7 +62,8 @@ export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBar
 
   const allNames = tools.map((tool) => tool.name);
   const enabledCount = allNames.filter((name) => isToolEnabled(settings, name)).length;
-  const showToolRows = settings.useTools || settings.useAgent || settings.useGraph;
+  const showToolRows =
+    settings.useTools || settings.useAgent || settings.useGraph || settings.useMultiAgent;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pt-3">
@@ -125,6 +129,25 @@ export function ToolSettingsBar({ settings, onUpdate, onReset }: ToolSettingsBar
             {(settings.useTools || settings.useAgent) &&
               settings.useGraph &&
               ' Wins over "Tools" and "Agent mode" if either is also on.'}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+          <div className="flex items-center gap-2">
+            <Users className="text-muted-foreground size-4" />
+            <span className="text-sm font-medium">Multi-agent mode</span>
+            <Switch
+              checked={settings.useMultiAgent}
+              onCheckedChange={(checked) => onUpdate({ useMultiAgent: checked })}
+            />
+          </div>
+
+          <p className="text-muted-foreground max-w-sm flex-1 text-xs leading-relaxed">
+            Routes through a coordinator that dispatches to planner/researcher/writer/reviewer
+            specialists instead of one agent — the researcher uses the tools below.
+            {(settings.useTools || settings.useAgent || settings.useGraph) &&
+              settings.useMultiAgent &&
+              ' Wins over "Tools", "Agent mode", and "Graph mode" if any is also on.'}
           </p>
         </div>
 

@@ -197,6 +197,24 @@ const envSchema = z.object({
   // — bounds how long a paused-awaiting-approval run's state lingers in
   // Redis if nobody ever resumes it.
   GRAPH_CHECKPOINT_TTL_MINUTES: z.coerce.number().int().min(1).default(60),
+
+  // Multi-Agent (Phase 8) — a LangGraph "supervisor" graph: a coordinator
+  // node dynamically routes between planner/researcher/writer/reviewer
+  // specialists over shared blackboard state, no human-in-the-loop. See
+  // docs/phases/phase-8-multi-agent.md.
+  //
+  // Bounds the coordinator's routing loop — a separate knob from
+  // AGENT_GRAPH_MAX_STEPS since this is yet another conceptually distinct
+  // loop (routing between specialists, not agent<->tools).
+  MULTI_AGENT_MAX_ROUNDS: z.coerce.number().int().min(1).default(10),
+  // Per-visit tool-call cap for the researcher node — separate knob from
+  // TOOLS_MAX_ITERATIONS/AGENT_GRAPH_MAX_STEPS, same "separate loop,
+  // separate knob" convention.
+  MULTI_AGENT_RESEARCHER_MAX_TOOL_CALLS: z.coerce.number().int().min(1).default(3),
+  // TTL for the multi-agent graph's own Redis-backed checkpointer — a
+  // separate RedisSaver instance from Phase 7's (own TTL, own thread-id
+  // namespace) so the two graphs' checkpoints can never collide.
+  MULTI_AGENT_CHECKPOINT_TTL_MINUTES: z.coerce.number().int().min(1).default(60),
 });
 
 //validate environment variables

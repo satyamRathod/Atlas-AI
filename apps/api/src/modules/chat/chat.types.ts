@@ -1,6 +1,7 @@
 import type { UsageMetadata } from '@langchain/core/messages';
 
 import type { AgentRunInfo, AgentStepInfo, AgentStepStart } from '@/langchain/agents/index.js';
+import type { EvaluationRunInfo } from '@/langchain/evaluation/index.js';
 import type { GraphNodeInfo, GraphRunInfo, PendingApprovalInfo } from '@/langchain/graph/index.js';
 import type { GuardrailReport } from '@/langchain/guardrails/index.js';
 import type { MemoryInfo } from '@/langchain/memory/index.js';
@@ -98,6 +99,12 @@ export interface ChatResponse {
    * recorded to history in the same call.
    */
   multiAgentRun?: MultiAgentRunInfo;
+  /**
+   * Present only when the request asked for `useEvaluation: true` (§3 of
+   * docs/phases/phase-9-evaluation.md). Orthogonal to generation modes —
+   * scored after the final reply is available. Omitted on graph interrupts.
+   */
+  evaluation?: EvaluationRunInfo;
   usage?: UsageMetadata;
 }
 
@@ -175,6 +182,8 @@ export interface StreamChunk {
    */
   agentTurn?: MultiAgentTurnInfo;
   multiAgentRun?: MultiAgentRunInfo;
+  /** Only on `done` when `useEvaluation` was set — no live metric SSE events. */
+  evaluation?: EvaluationRunInfo;
   model?: string;
   usage?: UsageMetadata;
   message?: string;

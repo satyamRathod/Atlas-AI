@@ -57,6 +57,10 @@ export class ChatController {
         ...(query.useAgent !== undefined ? { useAgent: query.useAgent } : {}),
         ...(query.useGraph !== undefined ? { useGraph: query.useGraph } : {}),
         ...(query.useMultiAgent !== undefined ? { useMultiAgent: query.useMultiAgent } : {}),
+        ...(query.useEvaluation !== undefined ? { useEvaluation: query.useEvaluation } : {}),
+        ...(query.evaluationGroundTruth !== undefined
+          ? { evaluationGroundTruth: query.evaluationGroundTruth }
+          : {}),
         options: {
           signal: abortController.signal,
         },

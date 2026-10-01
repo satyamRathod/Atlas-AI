@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import { httpLogger } from '../infrastructure/logger/index.js';
 import type { ChatController } from '../modules/chat/chat.controller.js';
 import { createChatRouter } from '../modules/chat/index.js';
+import type { EvaluationController } from '../modules/evaluation/evaluation.controller.js';
+import { createEvaluationRouter } from '../modules/evaluation/evaluation.route.js';
 import type { GraphController } from '../modules/graph/graph.controller.js';
 import { createGraphRouter } from '../modules/graph/graph.route.js';
 import healthRouter from '../modules/health/health.route.js';
@@ -23,6 +25,7 @@ interface AppDependencies {
   toolsController: ToolsController;
   graphController: GraphController;
   multiAgentController: MultiAgentController;
+  evaluationController: EvaluationController;
 }
 
 export function createApp({
@@ -31,6 +34,7 @@ export function createApp({
   toolsController,
   graphController,
   multiAgentController,
+  evaluationController,
 }: AppDependencies): Express {
   const app: Express = express();
 
@@ -63,6 +67,7 @@ export function createApp({
   app.use('/api/v1/tools', createToolsRouter(toolsController));
   app.use('/api/v1/graph', createGraphRouter(graphController));
   app.use('/api/v1/multi-agent', createMultiAgentRouter(multiAgentController));
+  app.use('/api/v1/evaluation', createEvaluationRouter(evaluationController));
 
   // Error handling
   app.use(notFoundHandler);

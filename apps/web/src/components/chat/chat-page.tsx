@@ -1,7 +1,18 @@
-import { Columns2, RotateCcw, Settings2, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react';
+import {
+  ClipboardCheck,
+  Columns2,
+  FlaskConical,
+  RotateCcw,
+  Settings2,
+  SlidersHorizontal,
+  Sparkles,
+  Wrench,
+} from 'lucide-react';
 import { useState } from 'react';
 
+import { BenchmarkDialog } from '@/components/chat/benchmark-dialog';
 import { ChatInput } from '@/components/chat/chat-input';
+import { EvaluationSettingsBar } from '@/components/chat/evaluation-settings-bar';
 import { MessageList } from '@/components/chat/message-list';
 import { PromptComparisonDialog } from '@/components/chat/prompt-comparison-dialog';
 import { PromptSettingsBar } from '@/components/chat/prompt-settings-bar';
@@ -9,12 +20,13 @@ import { RetrievalSettingsBar } from '@/components/chat/retrieval-settings-bar';
 import { ToolSettingsBar } from '@/components/chat/tool-settings-bar';
 import { Button } from '@/components/ui/button';
 import { useChat } from '@/hooks/use-chat';
+import { useEvaluationSettings } from '@/hooks/use-evaluation-settings';
 import { usePromptSettings } from '@/hooks/use-prompt-settings';
 import { useRetrievalSettings } from '@/hooks/use-retrieval-settings';
 import { useToolSettings } from '@/hooks/use-tool-settings';
 import { cn } from '@/lib/utils';
 
-type SettingsPanel = 'none' | 'retrieval' | 'prompt' | 'tools';
+type SettingsPanel = 'none' | 'retrieval' | 'prompt' | 'tools' | 'evaluation';
 
 export function ChatPage() {
   const { messages, sessionId, isStreaming, sendMessage, approveGraphRun, resetConversation } =
@@ -22,8 +34,10 @@ export function ChatPage() {
   const { settings, updateSettings, resetSettings } = useRetrievalSettings();
   const promptSettings = usePromptSettings();
   const toolSettings = useToolSettings();
+  const evaluationSettings = useEvaluationSettings();
   const [openPanel, setOpenPanel] = useState<SettingsPanel>('none');
   const [compareOpen, setCompareOpen] = useState(false);
+  const [benchmarkOpen, setBenchmarkOpen] = useState(false);
 
   const togglePanel = (panel: SettingsPanel) => {
     setOpenPanel((prev) => (prev === panel ? 'none' : panel));
@@ -67,6 +81,17 @@ export function ChatPage() {
             Tools
           </Button>
           <Button
+            variant={openPanel === 'evaluation' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => togglePanel('evaluation')}
+            className="gap-1.5"
+          >
+            <ClipboardCheck
+              className={cn('size-3.5', openPanel === 'evaluation' && 'text-primary')}
+            />
+            Eval
+          </Button>
+          <Button
             variant="ghost"
             size="sm"
             onClick={() => setCompareOpen(true)}
@@ -74,6 +99,15 @@ export function ChatPage() {
           >
             <Columns2 className="size-3.5" />
             Compare
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setBenchmarkOpen(true)}
+            className="gap-1.5"
+          >
+            <FlaskConical className="size-3.5" />
+            Benchmarks
           </Button>
           <Button variant="ghost" size="sm" onClick={resetConversation} className="gap-1.5">
             <RotateCcw className="size-3.5" />
@@ -106,18 +140,33 @@ export function ChatPage() {
         />
       )}
 
+      {openPanel === 'evaluation' && (
+        <EvaluationSettingsBar
+          settings={evaluationSettings.settings}
+          onUpdate={evaluationSettings.updateSettings}
+          onReset={evaluationSettings.resetSettings}
+        />
+      )}
+
       <MessageList messages={messages} sessionId={sessionId} onApproveGraph={approveGraphRun} />
 
       <div className="mx-auto w-full max-w-3xl px-4 pb-6">
         <ChatInput
           onSend={(content) =>
-            sendMessage(content, settings, promptSettings.settings, toolSettings.settings)
+            sendMessage(
+              content,
+              settings,
+              promptSettings.settings,
+              toolSettings.settings,
+              evaluationSettings.settings,
+            )
           }
           disabled={isStreaming}
         />
       </div>
 
       <PromptComparisonDialog open={compareOpen} onOpenChange={setCompareOpen} />
+      <BenchmarkDialog open={benchmarkOpen} onOpenChange={setBenchmarkOpen} />
     </div>
   );
 }

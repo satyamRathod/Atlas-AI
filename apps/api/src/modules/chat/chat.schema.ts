@@ -52,6 +52,12 @@ export const chatRequestSchema = z.object({
   // precedence of all modes: useMultiAgent > useGraph > useAgent >
   // useTools > structuredOutput (§4 of docs/phases/phase-8-multi-agent.md).
   useMultiAgent: z.boolean().optional(),
+  // Evaluation (Phase 9) — orthogonal to generation modes. When true,
+  // scores the final reply (faithfulness / precision / recall /
+  // hallucination) after generation completes. Optional ground truth
+  // unlocks context recall on a single turn.
+  useEvaluation: z.boolean().optional(),
+  evaluationGroundTruth: z.string().trim().max(8000).optional(),
 });
 
 export type ChatRequestInput = z.infer<typeof chatRequestSchema>;
@@ -120,6 +126,8 @@ export const chatStreamQuerySchema = z.object({
   useAgent: booleanQueryParam,
   useGraph: booleanQueryParam,
   useMultiAgent: booleanQueryParam,
+  useEvaluation: booleanQueryParam,
+  evaluationGroundTruth: z.string().trim().max(8000).optional(),
 });
 
 export type ChatStreamQueryInput = z.infer<typeof chatStreamQuerySchema>;

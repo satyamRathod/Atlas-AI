@@ -4,6 +4,7 @@ import { resumeGraphRun, type StreamChatHandlers, streamChatMessage } from '@/li
 import type {
   AgentStepDisplay,
   ChatMessage,
+  EvaluationSettings,
   GraphNodeDisplay,
   MultiAgentTurnDisplay,
   PromptSettings,
@@ -273,6 +274,7 @@ export function useChat() {
             // safe (unlike `graphRun.nodes` above, there's no earlier partial
             // run's data it could ever clobber).
             ...(chunk.multiAgentRun !== undefined ? { multiAgentRun: chunk.multiAgentRun } : {}),
+            ...(chunk.evaluation !== undefined ? { evaluation: chunk.evaluation } : {}),
             latencyMs: performance.now() - startedAt,
           }));
           setIsStreaming(false);
@@ -295,6 +297,7 @@ export function useChat() {
       retrievalSettings: RetrievalSettings,
       promptSettings?: PromptSettings,
       toolSettings?: ToolSettings,
+      evaluationSettings?: EvaluationSettings,
     ) => {
       const trimmed = content.trim();
       if (!trimmed || isStreaming) return;
@@ -321,6 +324,7 @@ export function useChat() {
         createStreamHandlers(assistantId, startedAt),
         promptSettings,
         toolSettings,
+        evaluationSettings,
       );
 
       closeStreamRef.current = close;

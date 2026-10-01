@@ -215,6 +215,17 @@ const envSchema = z.object({
   // separate RedisSaver instance from Phase 7's (own TTL, own thread-id
   // namespace) so the two graphs' checkpoints can never collide.
   MULTI_AGENT_CHECKPOINT_TTL_MINUTES: z.coerce.number().int().min(1).default(60),
+
+  // Evaluation (Phase 9) — hybrid faithfulness / precision / recall /
+  // hallucination scoring after a turn (opt-in `useEvaluation`) plus
+  // Redis-backed batch benchmark run history. See
+  // docs/phases/phase-9-evaluation.md.
+  EVALUATION_REDIS_PREFIX: z.string().default('atlas:eval:'),
+  // How long a persisted benchmark run lingers in Redis (minutes).
+  EVALUATION_RUN_TTL_MINUTES: z.coerce.number().int().min(1).default(1440),
+  // Caps how many atomic claims the LLM-as-judge scores per turn — bounds
+  // Groq TPM cost when an answer is long.
+  EVALUATION_MAX_CLAIMS: z.coerce.number().int().min(1).default(12),
 });
 
 //validate environment variables

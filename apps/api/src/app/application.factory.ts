@@ -3,6 +3,7 @@ import { createRedisClient } from '@/infrastructure/redis/index.js';
 import { ReactAgentRunner } from '@/langchain/agents/index.js';
 import { createChatModel } from '@/langchain/chat/index.js';
 import { createEmbeddings } from '@/langchain/embeddings/index.js';
+import { BenchmarkRunner, TurnEvaluator } from '@/langchain/evaluation/index.js';
 import {
   buildAgentGraph,
   createGraphCheckpointer,
@@ -33,6 +34,7 @@ import { createHttpServer } from '../http/server.js';
 import { ChatController } from '../modules/chat/chat.controller.js';
 import { ChatService } from '../modules/chat/chat.service.js';
 import { RedisChatMemoryStore } from '../modules/chat/infrastructure/redis-chat-memory-store.js';
+import { EvaluationController, RedisEvaluationStore } from '../modules/evaluation/index.js';
 import { GraphController } from '../modules/graph/graph.controller.js';
 import { MultiAgentController } from '../modules/multi-agent/multi-agent.controller.js';
 import { RedisPromptStore } from '../modules/prompts/infrastructure/redis-prompt-store.js';
@@ -191,6 +193,20 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 9 — Evaluation
+   |--------------------------------------------------------------------------
+   | Hybrid turn evaluator (LLM-as-judge + heuristics) injected into
+   | ChatService for opt-in `useEvaluation`. Benchmark runner reuses
+   | ChatService.answerForBenchmark (normal RAG only) then scores with
+   | ground truth. Run history lives in Redis under EVALUATION_REDIS_PREFIX.
+   | See docs/phases/phase-9-evaluation.md.
+   */
+
+  const turnEvaluator = new TurnEvaluator(chatModel);
+  const evaluationStore = new RedisEvaluationStore(redisClient);
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
@@ -204,8 +220,11 @@ export async function buildApplication(): Promise<Application> {
     reactAgentRunner,
     graphAgentRunner,
     multiAgentRunner,
+    turnEvaluator,
     semanticMemoryStore,
   );
+
+  const benchmarkRunner = new BenchmarkRunner(chatService, turnEvaluator, evaluationStore);
 
   /*
    |--------------------------------------------------------------------------
@@ -218,6 +237,7 @@ export async function buildApplication(): Promise<Application> {
   const toolsController = new ToolsController(toolExecutor);
   const graphController = new GraphController(compiledAgentGraph);
   const multiAgentController = new MultiAgentController(compiledMultiAgentGraph);
+  const evaluationController = new EvaluationController(benchmarkRunner, evaluationStore);
 
   /*
    |--------------------------------------------------------------------------
@@ -231,6 +251,7 @@ export async function buildApplication(): Promise<Application> {
     toolsController,
     graphController,
     multiAgentController,
+    evaluationController,
   });
 
   /*

@@ -341,6 +341,100 @@ export interface MultiAgentRunInfo {
   threadId: string;
 }
 
+/** Named metrics Phase 9 exposes. Mirrors `EvaluationMetricName` in apps/api. */
+export type EvaluationMetricName =
+  | 'faithfulness'
+  | 'precision'
+  | 'recall'
+  | 'hallucination'
+  | 'correctness';
+
+export type ClaimSupport = 'supported' | 'unsupported' | 'contradictory';
+
+export interface ClaimVerdict {
+  claim: string;
+  support: ClaimSupport;
+  rationale?: string;
+}
+
+export interface FaithfulnessResult {
+  score: number;
+  claims: readonly ClaimVerdict[];
+  supportedCount: number;
+  unsupportedCount: number;
+  contradictoryCount: number;
+}
+
+export interface HallucinationResult {
+  detected: boolean;
+  rate: number;
+  claims: readonly ClaimVerdict[];
+}
+
+export interface PrecisionResult {
+  score: number;
+  citationScores: readonly { index: number; relevant: boolean; method: 'heuristic' | 'llm' }[];
+}
+
+export interface RecallResult {
+  score: number;
+  groundTruthClaims: readonly { claim: string; covered: boolean }[];
+}
+
+export interface MetricScore {
+  name: EvaluationMetricName;
+  score: number;
+}
+
+/** Full evaluation payload for one turn or benchmark case. Mirrors `EvaluationRunInfo`. */
+export interface EvaluationRunInfo {
+  mode: 'turn' | 'benchmark';
+  scores: readonly MetricScore[];
+  faithfulness: FaithfulnessResult;
+  hallucination: HallucinationResult;
+  precision: PrecisionResult;
+  recall?: RecallResult;
+  correctness?: { score: number };
+  durationMs: number;
+}
+
+export interface BenchmarkCase {
+  id: string;
+  question: string;
+  expectedAnswer: string;
+  expectedContextHints?: readonly string[];
+}
+
+export interface BenchmarkCaseResult {
+  caseId: string;
+  question: string;
+  reply: string;
+  citationCount: number;
+  evaluation: EvaluationRunInfo;
+}
+
+export interface BenchmarkRunSummary {
+  runId: string;
+  createdAt: string;
+  caseCount: number;
+  aggregateScores: readonly MetricScore[];
+  cases: readonly BenchmarkCaseResult[];
+  durationMs: number;
+}
+
+/** Thin list row from `GET /api/v1/evaluation/runs`. */
+export interface BenchmarkRunListItem {
+  runId: string;
+  createdAt: string;
+  caseCount: number;
+  aggregateScores: readonly MetricScore[];
+  durationMs: number;
+}
+
+export interface EvaluationSettings {
+  useEvaluation: boolean;
+}
+
 export interface ChatResponse {
   sessionId: string;
   reply: string;
@@ -359,6 +453,8 @@ export interface ChatResponse {
   graphRun?: GraphRunInfo;
   /** Present only when the request asked for `useMultiAgent: true` (Phase 8). Unlike `graphRun`, a multi-agent turn never pauses — it always runs to completion in the same call. */
   multiAgentRun?: MultiAgentRunInfo;
+  /** Present only when the request asked for `useEvaluation: true` (Phase 9). */
+  evaluation?: EvaluationRunInfo;
   usage?: ChatUsage;
 }
 
@@ -418,6 +514,8 @@ export interface StreamChunk {
    */
   agentTurn?: MultiAgentTurnInfo;
   multiAgentRun?: MultiAgentRunInfo;
+  /** Only on `done` when `useEvaluation` was set — no live metric SSE events. */
+  evaluation?: EvaluationRunInfo;
   model?: string;
   usage?: ChatUsage;
   message?: string;
@@ -500,6 +598,8 @@ export interface ChatMessage {
   agentTurns?: readonly MultiAgentTurnDisplay[];
   /** Set once `done` carries a `multiAgentRun` — the dashboard/timeline/comparison views' data source for plan/research/draft/review history. */
   multiAgentRun?: MultiAgentRunInfo;
+  /** Set once `done` carries `evaluation` (Phase 9) — scorecards / dashboard data source. */
+  evaluation?: EvaluationRunInfo;
   usage?: ChatUsage;
   model?: string;
   /** Wall-clock time from request start to the `done` event, in ms. */

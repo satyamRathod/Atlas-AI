@@ -11,6 +11,7 @@ import { concat } from '@langchain/core/utils/stream';
 import { env } from '@/config/env.js';
 import { logger } from '@/infrastructure/logger/index.js';
 import type { AgentLoopEvent, AgentRunInfo, ReactAgentRunner } from '@/langchain/agents/index.js';
+import type { EvaluationRunInfo, TurnEvaluator } from '@/langchain/evaluation/index.js';
 import type {
   GraphAgentRunner,
   GraphLoopEvent,
@@ -194,8 +195,35 @@ export class ChatService {
     private readonly reactAgentRunner: ReactAgentRunner,
     private readonly graphAgentRunner: GraphAgentRunner,
     private readonly multiAgentRunner: MultiAgentRunner,
+    private readonly turnEvaluator: TurnEvaluator,
     private readonly semanticMemoryStore?: SemanticMemoryStore,
   ) {}
+
+  /**
+   * Normal-mode RAG answer for the Phase 9 benchmark runner — never opts
+   * into tools/agent/graph/multi-agent/evaluation (the runner scores
+   * separately with ground truth).
+   */
+  public async answerForBenchmark(
+    question: string,
+    sessionId: string,
+  ): Promise<{
+    reply: string;
+    context: string;
+    citations: readonly ChatCitation[];
+  }> {
+    const response = await this.invoke({
+      message: question,
+      sessionId,
+      useEvaluation: false,
+    });
+
+    return {
+      reply: response.reply,
+      context: response.promptInfo.variables.context,
+      citations: response.citations,
+    };
+  }
 
   public async invoke(request: ChatRequestInput): Promise<ChatResponse> {
     const sessionId = request.sessionId ?? randomUUID();
@@ -298,6 +326,16 @@ export class ChatService {
         generation.multiAgentRun !== undefined,
     });
 
+    const evaluation = request.useEvaluation
+      ? await this.maybeEvaluate({
+          question: request.message,
+          reply: generation.reply,
+          context,
+          citations: turnMeta.citations,
+          ...(request.evaluationGroundTruth ? { groundTruth: request.evaluationGroundTruth } : {}),
+        })
+      : undefined;
+
     return {
       sessionId,
       reply: generation.reply,
@@ -314,6 +352,7 @@ export class ChatService {
       ...(generation.multiAgentRun !== undefined
         ? { multiAgentRun: generation.multiAgentRun }
         : {}),
+      ...(evaluation ? { evaluation } : {}),
       ...(generation.usage ? { usage: generation.usage } : {}),
     };
   }
@@ -384,6 +423,8 @@ export class ChatService {
     useAgent,
     useGraph,
     useMultiAgent,
+    useEvaluation,
+    evaluationGroundTruth,
     options,
   }: {
     message: string;
@@ -398,6 +439,8 @@ export class ChatService {
     useAgent?: boolean;
     useGraph?: boolean;
     useMultiAgent?: boolean;
+    useEvaluation?: boolean;
+    evaluationGroundTruth?: string;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
     const sid = sessionId ?? randomUUID();
@@ -632,6 +675,16 @@ export class ChatService {
         multiAgentRunInfo !== undefined,
     });
 
+    const evaluation = useEvaluation
+      ? await this.maybeEvaluate({
+          question: message,
+          reply: fullText,
+          context,
+          citations,
+          ...(evaluationGroundTruth ? { groundTruth: evaluationGroundTruth } : {}),
+        })
+      : undefined;
+
     yield {
       type: 'done',
       sessionId: sid,
@@ -644,6 +697,7 @@ export class ChatService {
       ...(agentRunInfo !== undefined ? { agentRun: agentRunInfo } : {}),
       ...(graphRunInfo !== undefined ? { graphRun: graphRunInfo } : {}),
       ...(multiAgentRunInfo !== undefined ? { multiAgentRun: multiAgentRunInfo } : {}),
+      ...(evaluation ? { evaluation } : {}),
       ...(usage ? { usage } : {}),
     };
   }
@@ -1353,6 +1407,33 @@ export class ChatService {
       .catch((error: unknown) => {
         logger.error({ error, sessionId }, 'Semantic memory fact extraction failed');
       });
+  }
+
+  /** Phase 9 — hybrid post-hoc scoring. Failures are logged and omitted from the response rather than failing the turn. */
+  private async maybeEvaluate(input: {
+    question: string;
+    reply: string;
+    context: string;
+    citations: readonly ChatCitation[];
+    groundTruth?: string;
+  }): Promise<EvaluationRunInfo | undefined> {
+    try {
+      return await this.turnEvaluator.evaluateTurn({
+        question: input.question,
+        reply: input.reply,
+        context: input.context,
+        citations: input.citations.map((citation) => ({
+          index: citation.index,
+          snippet: citation.snippet,
+          content: citation.content,
+        })),
+        ...(input.groundTruth ? { groundTruth: input.groundTruth } : {}),
+        mode: 'turn',
+      });
+    } catch (error) {
+      logger.error({ error }, 'Turn evaluation failed; omitting evaluation from response');
+      return undefined;
+    }
   }
 }
 

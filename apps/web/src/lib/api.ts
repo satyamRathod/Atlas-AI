@@ -1,5 +1,9 @@
 import type {
+  BenchmarkCase,
+  BenchmarkRunListItem,
+  BenchmarkRunSummary,
   ChatResponse,
+  EvaluationSettings,
   GraphNodeInfo,
   MetadataFilter,
   PromptSettings,
@@ -48,12 +52,18 @@ function buildToolFields(toolSettings?: ToolSettings) {
   };
 }
 
+function buildEvaluationFields(evaluationSettings?: EvaluationSettings) {
+  if (!evaluationSettings) return {};
+  return { useEvaluation: evaluationSettings.useEvaluation };
+}
+
 export async function sendChatMessage(
   message: string,
   sessionId: string | undefined,
   settings: RetrievalSettings,
   promptSettings?: PromptSettings,
   toolSettings?: ToolSettings,
+  evaluationSettings?: EvaluationSettings,
 ): Promise<ChatResponse> {
   const filters = buildFilters(settings);
 
@@ -71,6 +81,7 @@ export async function sendChatMessage(
       useQueryExpansion: settings.useQueryExpansion,
       ...buildPromptFields(promptSettings),
       ...buildToolFields(toolSettings),
+      ...buildEvaluationFields(evaluationSettings),
     }),
   });
 
@@ -149,6 +160,7 @@ export function streamChatMessage(
   handlers: StreamChatHandlers,
   promptSettings?: PromptSettings,
   toolSettings?: ToolSettings,
+  evaluationSettings?: EvaluationSettings,
 ): () => void {
   const params = new URLSearchParams({ message, retrievalStrategy: settings.strategy });
   if (sessionId) params.set('sessionId', sessionId);
@@ -178,6 +190,10 @@ export function streamChatMessage(
     params.set('useAgent', String(toolSettings.useAgent));
     params.set('useGraph', String(toolSettings.useGraph));
     params.set('useMultiAgent', String(toolSettings.useMultiAgent));
+  }
+
+  if (evaluationSettings) {
+    params.set('useEvaluation', String(evaluationSettings.useEvaluation));
   }
 
   const source = new EventSource(`${API_BASE_URL}/api/v1/chat/stream?${params.toString()}`);
@@ -360,4 +376,42 @@ export async function getMultiAgentStateHistory(
   }
   const data = (await res.json()) as { checkpoints: MultiAgentCheckpointSummary[] };
   return data.checkpoints;
+}
+
+export async function listBenchmarkCases(): Promise<readonly BenchmarkCase[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/evaluation/benchmarks`);
+  if (!res.ok) {
+    throw new Error(`Failed to load benchmark cases (status ${res.status})`);
+  }
+  const data = (await res.json()) as { cases: BenchmarkCase[] };
+  return data.cases;
+}
+
+export async function runBenchmark(caseIds?: readonly string[]): Promise<BenchmarkRunSummary> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/evaluation/benchmarks/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(caseIds && caseIds.length > 0 ? { caseIds } : {}),
+  });
+  if (!res.ok) {
+    throw new Error(`Benchmark run failed (status ${res.status})`);
+  }
+  return res.json() as Promise<BenchmarkRunSummary>;
+}
+
+export async function listEvaluationRuns(): Promise<readonly BenchmarkRunListItem[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/evaluation/runs`);
+  if (!res.ok) {
+    throw new Error(`Failed to load evaluation runs (status ${res.status})`);
+  }
+  const data = (await res.json()) as { runs: BenchmarkRunListItem[] };
+  return data.runs;
+}
+
+export async function getEvaluationRun(runId: string): Promise<BenchmarkRunSummary> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/evaluation/runs/${encodeURIComponent(runId)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load evaluation run (status ${res.status})`);
+  }
+  return res.json() as Promise<BenchmarkRunSummary>;
 }

@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import { AgentCommunicationTimeline } from '@/components/chat/agent-communication-timeline';
 import { AgentPlanView } from '@/components/chat/agent-plan-view';
 import { AgentReasoningTimeline } from '@/components/chat/agent-reasoning-timeline';
+import { EvaluationDashboard } from '@/components/chat/evaluation-dashboard';
+import { EvaluationScorecards } from '@/components/chat/evaluation-scorecards';
 import { GraphExecutionReplay } from '@/components/chat/graph-execution-replay';
 import { GraphStateInspector } from '@/components/chat/graph-state-inspector';
 import { GraphVisualization } from '@/components/chat/graph-visualization';
@@ -126,6 +128,7 @@ export function MessageBubble({ message, sessionId, onApproveGraph }: MessageBub
             (message.agentSteps && message.agentSteps.length > 0) ||
             (message.graphNodes && message.graphNodes.length > 0) ||
             (message.agentTurns && message.agentTurns.length > 0) ||
+            message.evaluation ||
             message.pendingApproval ||
             message.latencyMs !== undefined) && (
             <div className="flex w-full flex-col gap-2 px-1">
@@ -171,6 +174,8 @@ export function MessageBubble({ message, sessionId, onApproveGraph }: MessageBub
                 draftHistory={message.multiAgentRun?.draftHistory}
                 reviewHistory={message.multiAgentRun?.reviewHistory}
               />
+              <EvaluationDashboard evaluation={message.evaluation} />
+              <EvaluationScorecards evaluation={message.evaluation} />
               <GuardrailsPanel guardrails={message.guardrails} />
               <UsageBadges
                 usage={message.usage}

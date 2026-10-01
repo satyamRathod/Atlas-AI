@@ -37,6 +37,11 @@ import { RedisChatMemoryStore } from '../modules/chat/infrastructure/redis-chat-
 import { EvaluationController, RedisEvaluationStore } from '../modules/evaluation/index.js';
 import { GraphController } from '../modules/graph/graph.controller.js';
 import { MultiAgentController } from '../modules/multi-agent/multi-agent.controller.js';
+import {
+  ObservabilityController,
+  ObservabilityService,
+  RedisObservabilityStore,
+} from '../modules/observability/index.js';
 import { RedisPromptStore } from '../modules/prompts/infrastructure/redis-prompt-store.js';
 import { PromptController } from '../modules/prompts/prompt.controller.js';
 import { PromptService } from '../modules/prompts/prompt.service.js';
@@ -207,6 +212,18 @@ export async function buildApplication(): Promise<Application> {
 
   /*
    |--------------------------------------------------------------------------
+   | Phase 10 — Observability
+   |--------------------------------------------------------------------------
+   | Always-on (OBSERVABILITY_ENABLED) fail-open per-turn traces in Redis.
+   | No LangSmith / OpenTelemetry — first-party ObservabilityTurn records.
+   | See docs/phases/phase-10-observability.md.
+   */
+
+  const observabilityStore = new RedisObservabilityStore(redisClient);
+  const observabilityService = new ObservabilityService(observabilityStore);
+
+  /*
+   |--------------------------------------------------------------------------
    | Services
    |--------------------------------------------------------------------------
    */
@@ -221,6 +238,7 @@ export async function buildApplication(): Promise<Application> {
     graphAgentRunner,
     multiAgentRunner,
     turnEvaluator,
+    observabilityService,
     semanticMemoryStore,
   );
 
@@ -238,6 +256,7 @@ export async function buildApplication(): Promise<Application> {
   const graphController = new GraphController(compiledAgentGraph);
   const multiAgentController = new MultiAgentController(compiledMultiAgentGraph);
   const evaluationController = new EvaluationController(benchmarkRunner, evaluationStore);
+  const observabilityController = new ObservabilityController(observabilityStore);
 
   /*
    |--------------------------------------------------------------------------
@@ -252,6 +271,7 @@ export async function buildApplication(): Promise<Application> {
     graphController,
     multiAgentController,
     evaluationController,
+    observabilityController,
   });
 
   /*

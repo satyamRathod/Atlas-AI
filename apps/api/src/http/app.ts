@@ -12,6 +12,8 @@ import { createGraphRouter } from '../modules/graph/graph.route.js';
 import healthRouter from '../modules/health/health.route.js';
 import type { MultiAgentController } from '../modules/multi-agent/multi-agent.controller.js';
 import { createMultiAgentRouter } from '../modules/multi-agent/multi-agent.route.js';
+import type { ObservabilityController } from '../modules/observability/observability.controller.js';
+import { createObservabilityRouter } from '../modules/observability/observability.route.js';
 import type { PromptController } from '../modules/prompts/prompt.controller.js';
 import { createPromptRouter } from '../modules/prompts/prompt.route.js';
 import type { ToolsController } from '../modules/tools/tools.controller.js';
@@ -26,6 +28,7 @@ interface AppDependencies {
   graphController: GraphController;
   multiAgentController: MultiAgentController;
   evaluationController: EvaluationController;
+  observabilityController: ObservabilityController;
 }
 
 export function createApp({
@@ -35,6 +38,7 @@ export function createApp({
   graphController,
   multiAgentController,
   evaluationController,
+  observabilityController,
 }: AppDependencies): Express {
   const app: Express = express();
 
@@ -68,6 +72,7 @@ export function createApp({
   app.use('/api/v1/graph', createGraphRouter(graphController));
   app.use('/api/v1/multi-agent', createMultiAgentRouter(multiAgentController));
   app.use('/api/v1/evaluation', createEvaluationRouter(evaluationController));
+  app.use('/api/v1/observability', createObservabilityRouter(observabilityController));
 
   // Error handling
   app.use(notFoundHandler);

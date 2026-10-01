@@ -6,6 +6,8 @@ import type {
   EvaluationSettings,
   GraphNodeInfo,
   MetadataFilter,
+  ObservabilityMetrics,
+  ObservabilityTurn,
   PromptSettings,
   RetrievalSettings,
   StreamChunk,
@@ -414,4 +416,43 @@ export async function getEvaluationRun(runId: string): Promise<BenchmarkRunSumma
     throw new Error(`Failed to load evaluation run (status ${res.status})`);
   }
   return res.json() as Promise<BenchmarkRunSummary>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Phase 10 — Observability                                                   */
+/* -------------------------------------------------------------------------- */
+
+export async function listObservabilityTurns(options?: {
+  limit?: number;
+  sessionId?: string;
+}): Promise<readonly ObservabilityTurn[]> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set('limit', String(options.limit));
+  if (options?.sessionId) params.set('sessionId', options.sessionId);
+  const qs = params.toString();
+  const res = await fetch(`${API_BASE_URL}/api/v1/observability/turns${qs ? `?${qs}` : ''}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load observability turns (status ${res.status})`);
+  }
+  const data = (await res.json()) as { turns: ObservabilityTurn[] };
+  return data.turns;
+}
+
+export async function getObservabilityTurn(turnId: string): Promise<ObservabilityTurn> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/observability/turns/${encodeURIComponent(turnId)}`,
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load observability turn (status ${res.status})`);
+  }
+  return res.json() as Promise<ObservabilityTurn>;
+}
+
+export async function getObservabilityMetrics(limit?: number): Promise<ObservabilityMetrics> {
+  const qs = limit !== undefined ? `?limit=${limit}` : '';
+  const res = await fetch(`${API_BASE_URL}/api/v1/observability/metrics${qs}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load observability metrics (status ${res.status})`);
+  }
+  return res.json() as Promise<ObservabilityMetrics>;
 }

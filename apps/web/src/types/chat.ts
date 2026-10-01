@@ -609,3 +609,86 @@ export interface ChatMessage {
   isStreaming?: boolean;
   error?: string;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Phase 10 — Observability (mirrors apps/api modules/observability types)    */
+/* -------------------------------------------------------------------------- */
+
+export type ObservabilityMode =
+  | 'multi_agent'
+  | 'graph'
+  | 'agent'
+  | 'tools'
+  | 'structured'
+  | 'normal';
+
+export interface ObservabilityUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface ObservabilityStageTiming {
+  name: string;
+  durationMs: number;
+}
+
+export interface ObservabilityPromptSnapshot {
+  templateId: string;
+  templateName: string;
+  version: number;
+  usedFewShot: boolean;
+  variables: {
+    context: string;
+    summary: string;
+    memory: string;
+    question: string;
+  };
+}
+
+export interface ObservabilityFlags {
+  useTools: boolean;
+  useAgent: boolean;
+  useGraph: boolean;
+  useMultiAgent: boolean;
+  useEvaluation: boolean;
+  structuredOutput: boolean;
+  interrupted?: boolean;
+}
+
+export interface ObservabilityTurn {
+  turnId: string;
+  requestId?: string;
+  sessionId: string;
+  createdAt: string;
+  model: string;
+  mode: ObservabilityMode;
+  question: string;
+  replyPreview: string;
+  prompt: ObservabilityPromptSnapshot;
+  usage?: ObservabilityUsage;
+  costUsd?: number;
+  latency: {
+    totalMs: number;
+    firstTokenMs?: number;
+    stages: readonly ObservabilityStageTiming[];
+  };
+  retrieval: {
+    strategy: string;
+    stages: readonly ObservabilityStageTiming[];
+  };
+  flags: ObservabilityFlags;
+  error?: string;
+}
+
+export type ObservabilityTurnSummary = ObservabilityTurn;
+
+export interface ObservabilityMetrics {
+  requestCount: number;
+  totalTokens: number;
+  totalCostUsd: number;
+  avgLatencyMs: number;
+  byMode: readonly { mode: ObservabilityMode; count: number }[];
+  retrievalStageAvgMs: readonly ObservabilityStageTiming[];
+  sampleSize: number;
+}

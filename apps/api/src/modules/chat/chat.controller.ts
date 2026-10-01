@@ -15,7 +15,10 @@ export class ChatController {
   public handle: RequestHandler = async (req: Request, res: Response): Promise<void> => {
     const request = chatRequestSchema.parse(req.body);
 
-    const response = await this.chatService.invoke(request);
+    const response = await this.chatService.invoke({
+      ...request,
+      ...(req.id ? { requestId: String(req.id) } : {}),
+    });
     res.status(200).json(response);
   };
 
@@ -61,6 +64,7 @@ export class ChatController {
         ...(query.evaluationGroundTruth !== undefined
           ? { evaluationGroundTruth: query.evaluationGroundTruth }
           : {}),
+        ...(req.id ? { requestId: String(req.id) } : {}),
         options: {
           signal: abortController.signal,
         },

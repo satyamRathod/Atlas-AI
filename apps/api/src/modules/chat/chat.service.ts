@@ -47,6 +47,7 @@ import { buildDynamicPrompt } from '@/langchain/prompts/index.js';
 import type { RetrievalPipeline, RetrievalStrategy } from '@/langchain/retrieval/index.js';
 import type { RetrievedChunk } from '@/langchain/retrievers/index.js';
 import type { ToolCallInfo, ToolCallStart, ToolExecutor } from '@/langchain/tools/index.js';
+import type { ObservabilityService } from '@/modules/observability/index.js';
 import type { PromptResolvedTemplate, PromptService } from '@/modules/prompts/prompt.service.js';
 
 import type { ChatRequestInput } from './chat.schema.js';
@@ -196,6 +197,7 @@ export class ChatService {
     private readonly graphAgentRunner: GraphAgentRunner,
     private readonly multiAgentRunner: MultiAgentRunner,
     private readonly turnEvaluator: TurnEvaluator,
+    private readonly observability: ObservabilityService,
     private readonly semanticMemoryStore?: SemanticMemoryStore,
   ) {}
 
@@ -225,13 +227,22 @@ export class ChatService {
     };
   }
 
-  public async invoke(request: ChatRequestInput): Promise<ChatResponse> {
+  public async invoke(request: ChatRequestInput & { requestId?: string }): Promise<ChatResponse> {
+    const startedAt = performance.now();
     const sessionId = request.sessionId ?? randomUUID();
     const selection = toPromptSelection(request);
     const toolSelection = toToolSelection(request);
     const agentSelection = toAgentSelection(request);
     const graphSelection = toGraphSelection(request);
     const multiAgentSelection = toMultiAgentSelection(request);
+    const flags = {
+      useTools: toolSelection.useTools,
+      useAgent: agentSelection.useAgent,
+      useGraph: graphSelection.useGraph,
+      useMultiAgent: multiAgentSelection.useMultiAgent,
+      useEvaluation: request.useEvaluation ?? false,
+      structuredOutput: selection.structuredOutput,
+    };
 
     const [template, inputGuardrails] = await Promise.all([
       this.promptService.resolveVersion(selection.templateId, selection.version),
@@ -281,6 +292,7 @@ export class ChatService {
       hasContext: chunks.length > 0,
     };
 
+    const generationStartedAt = performance.now();
     const generation = await this.generate(
       template,
       selection,
@@ -292,11 +304,30 @@ export class ChatService {
       sessionId,
       turnMeta,
     );
+    const generationMs = Math.round(performance.now() - generationStartedAt);
 
     if (generation.graphRun?.interrupted) {
       // The turn is paused, not finished — no history append, no output
       // guardrails, no `usage` yet. It'll all happen when the client
       // resumes via `POST /api/v1/chat/graph/resume` (§4).
+      this.observability.recordTurn({
+        ...(request.requestId ? { requestId: request.requestId } : {}),
+        sessionId,
+        question: request.message,
+        reply: generation.reply,
+        model: env.GROQ_MODEL,
+        prompt: turnMeta.promptInfo,
+        retrieval: {
+          strategy: turnMeta.retrieval.strategy,
+          stages: turnMeta.retrieval.stages,
+        },
+        flags: { ...flags, interrupted: true },
+        latency: {
+          totalMs: Math.round(performance.now() - startedAt),
+          extraStages: [{ name: 'generation', durationMs: generationMs }],
+        },
+      });
+
       return {
         sessionId,
         reply: generation.reply,
@@ -326,15 +357,53 @@ export class ChatService {
         generation.multiAgentRun !== undefined,
     });
 
+    let evaluationMs: number | undefined;
     const evaluation = request.useEvaluation
-      ? await this.maybeEvaluate({
-          question: request.message,
-          reply: generation.reply,
-          context,
-          citations: turnMeta.citations,
-          ...(request.evaluationGroundTruth ? { groundTruth: request.evaluationGroundTruth } : {}),
-        })
+      ? await (async () => {
+          const evaluationStartedAt = performance.now();
+          const result = await this.maybeEvaluate({
+            question: request.message,
+            reply: generation.reply,
+            context,
+            citations: turnMeta.citations,
+            ...(request.evaluationGroundTruth
+              ? { groundTruth: request.evaluationGroundTruth }
+              : {}),
+          });
+          evaluationMs = Math.round(performance.now() - evaluationStartedAt);
+          return result;
+        })()
       : undefined;
+
+    this.observability.recordTurn({
+      ...(request.requestId ? { requestId: request.requestId } : {}),
+      sessionId,
+      question: request.message,
+      reply: generation.reply,
+      model: env.GROQ_MODEL,
+      prompt: turnMeta.promptInfo,
+      ...(generation.usage
+        ? {
+            usage: {
+              input_tokens: generation.usage.input_tokens ?? 0,
+              output_tokens: generation.usage.output_tokens ?? 0,
+              total_tokens: generation.usage.total_tokens ?? 0,
+            },
+          }
+        : {}),
+      retrieval: {
+        strategy: turnMeta.retrieval.strategy,
+        stages: turnMeta.retrieval.stages,
+      },
+      flags,
+      latency: {
+        totalMs: Math.round(performance.now() - startedAt),
+        extraStages: [
+          { name: 'generation', durationMs: generationMs },
+          ...(evaluationMs !== undefined ? [{ name: 'evaluation', durationMs: evaluationMs }] : []),
+        ],
+      },
+    });
 
     return {
       sessionId,
@@ -425,6 +494,7 @@ export class ChatService {
     useMultiAgent,
     useEvaluation,
     evaluationGroundTruth,
+    requestId,
     options,
   }: {
     message: string;
@@ -441,8 +511,10 @@ export class ChatService {
     useMultiAgent?: boolean;
     useEvaluation?: boolean;
     evaluationGroundTruth?: string;
+    requestId?: string;
     options?: StreamOptions;
   }): AsyncIterable<StreamChunk> {
+    const startedAt = performance.now();
     const sid = sessionId ?? randomUUID();
     const selection: PromptSelection = {
       templateId: promptTemplateId,
@@ -456,6 +528,14 @@ export class ChatService {
     const multiAgentSelection: MultiAgentSelection = {
       useMultiAgent: useMultiAgent ?? false,
       enabledTools,
+    };
+    const flags = {
+      useTools: toolSelection.useTools,
+      useAgent: agentSelection.useAgent,
+      useGraph: graphSelection.useGraph,
+      useMultiAgent: multiAgentSelection.useMultiAgent,
+      useEvaluation: useEvaluation ?? false,
+      structuredOutput: selection.structuredOutput,
     };
 
     const [template, inputGuardrails] = await Promise.all([
@@ -512,6 +592,15 @@ export class ChatService {
     let agentRunInfo: AgentRunInfo | undefined;
     let graphRunInfo: GraphRunInfo | undefined;
     let multiAgentRunInfo: MultiAgentRunInfo | undefined;
+    let firstTokenMs: number | undefined;
+
+    const markFirstToken = () => {
+      if (firstTokenMs === undefined) {
+        firstTokenMs = Math.round(performance.now() - startedAt);
+      }
+    };
+
+    const generationStartedAt = performance.now();
 
     if (multiAgentSelection.useMultiAgent) {
       // Same non-streaming-internally, live-events-forwarded shape as the
@@ -533,6 +622,7 @@ export class ChatService {
       usage = result.usage;
       multiAgentRunInfo = result.multiAgentRun;
 
+      markFirstToken();
       yield { type: 'token', sessionId: sid, text: fullText };
     } else if (graphSelection.useGraph) {
       const turnMeta: GraphTurnMeta = {
@@ -560,6 +650,29 @@ export class ChatService {
       const result = step.value;
 
       if (result.graphRun.interrupted) {
+        this.observability.recordTurn({
+          ...(requestId ? { requestId } : {}),
+          sessionId: sid,
+          question: message,
+          reply: result.reply,
+          model: env.GROQ_MODEL,
+          prompt: promptInfoObj,
+          retrieval: {
+            strategy: retrieval.strategy,
+            stages: retrieval.stages,
+          },
+          flags: { ...flags, interrupted: true },
+          latency: {
+            totalMs: Math.round(performance.now() - startedAt),
+            extraStages: [
+              {
+                name: 'generation',
+                durationMs: Math.round(performance.now() - generationStartedAt),
+              },
+            ],
+          },
+        });
+
         yield {
           type: 'graph_interrupt',
           sessionId: sid,
@@ -577,6 +690,7 @@ export class ChatService {
       usage = result.usage;
       graphRunInfo = result.graphRun;
 
+      markFirstToken();
       yield { type: 'token', sessionId: sid, text: fullText };
     } else if (agentSelection.useAgent) {
       // Same non-streaming-internally, live-events-forwarded shape as the
@@ -603,6 +717,7 @@ export class ChatService {
       usage = step.value.usage;
       agentRunInfo = step.value.agentRun;
 
+      markFirstToken();
       yield { type: 'token', sessionId: sid, text: fullText };
     } else if (toolSelection.useTools) {
       // Like structured output below, the tool loop always runs
@@ -627,6 +742,7 @@ export class ChatService {
       usage = step.value.usage;
       toolCallsInfo = step.value.toolCalls;
 
+      markFirstToken();
       yield { type: 'token', sessionId: sid, text: fullText };
     } else if (selection.structuredOutput) {
       // Structured output can't be safely streamed token-by-token (the JSON
@@ -638,6 +754,7 @@ export class ChatService {
       usage = generation.usage;
       structuredOutputInfo = generation.structuredOutput;
 
+      markFirstToken();
       yield { type: 'token', sessionId: sid, text: fullText };
     } else {
       const prompt = buildDynamicPrompt(template, { useFewShot: selection.useFewShot });
@@ -656,12 +773,15 @@ export class ChatService {
 
         if (part.text) {
           fullText += part.text;
+          markFirstToken();
           yield { type: 'token', sessionId: sid, text: part.text };
         }
       }
 
       usage = aggregated?.usage_metadata;
     }
+
+    const generationMs = Math.round(performance.now() - generationStartedAt);
 
     await this.historyStore.appendTurn(sid, new HumanMessage(message), new AIMessage(fullText));
     this.extractSemanticMemoryInBackground(sid, message, fullText);
@@ -675,15 +795,52 @@ export class ChatService {
         multiAgentRunInfo !== undefined,
     });
 
+    let evaluationMs: number | undefined;
     const evaluation = useEvaluation
-      ? await this.maybeEvaluate({
-          question: message,
-          reply: fullText,
-          context,
-          citations,
-          ...(evaluationGroundTruth ? { groundTruth: evaluationGroundTruth } : {}),
-        })
+      ? await (async () => {
+          const evaluationStartedAt = performance.now();
+          const result = await this.maybeEvaluate({
+            question: message,
+            reply: fullText,
+            context,
+            citations,
+            ...(evaluationGroundTruth ? { groundTruth: evaluationGroundTruth } : {}),
+          });
+          evaluationMs = Math.round(performance.now() - evaluationStartedAt);
+          return result;
+        })()
       : undefined;
+
+    this.observability.recordTurn({
+      ...(requestId ? { requestId } : {}),
+      sessionId: sid,
+      question: message,
+      reply: fullText,
+      model: env.GROQ_MODEL,
+      prompt: promptInfoObj,
+      ...(usage
+        ? {
+            usage: {
+              input_tokens: usage.input_tokens ?? 0,
+              output_tokens: usage.output_tokens ?? 0,
+              total_tokens: usage.total_tokens ?? 0,
+            },
+          }
+        : {}),
+      retrieval: {
+        strategy: retrieval.strategy,
+        stages: retrieval.stages,
+      },
+      flags,
+      latency: {
+        totalMs: Math.round(performance.now() - startedAt),
+        ...(firstTokenMs !== undefined ? { firstTokenMs } : {}),
+        extraStages: [
+          { name: 'generation', durationMs: generationMs },
+          ...(evaluationMs !== undefined ? [{ name: 'evaluation', durationMs: evaluationMs }] : []),
+        ],
+      },
+    });
 
     yield {
       type: 'done',

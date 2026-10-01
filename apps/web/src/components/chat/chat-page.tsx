@@ -1,4 +1,5 @@
 import {
+  Activity,
   ClipboardCheck,
   Columns2,
   FlaskConical,
@@ -14,6 +15,7 @@ import { BenchmarkDialog } from '@/components/chat/benchmark-dialog';
 import { ChatInput } from '@/components/chat/chat-input';
 import { EvaluationSettingsBar } from '@/components/chat/evaluation-settings-bar';
 import { MessageList } from '@/components/chat/message-list';
+import { ObservabilityDialog } from '@/components/chat/observability-dialog';
 import { PromptComparisonDialog } from '@/components/chat/prompt-comparison-dialog';
 import { PromptSettingsBar } from '@/components/chat/prompt-settings-bar';
 import { RetrievalSettingsBar } from '@/components/chat/retrieval-settings-bar';
@@ -38,6 +40,7 @@ export function ChatPage() {
   const [openPanel, setOpenPanel] = useState<SettingsPanel>('none');
   const [compareOpen, setCompareOpen] = useState(false);
   const [benchmarkOpen, setBenchmarkOpen] = useState(false);
+  const [observabilityOpen, setObservabilityOpen] = useState(false);
 
   const togglePanel = (panel: SettingsPanel) => {
     setOpenPanel((prev) => (prev === panel ? 'none' : panel));
@@ -109,6 +112,15 @@ export function ChatPage() {
             <FlaskConical className="size-3.5" />
             Benchmarks
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setObservabilityOpen(true)}
+            className="gap-1.5"
+          >
+            <Activity className="size-3.5" />
+            Observability
+          </Button>
           <Button variant="ghost" size="sm" onClick={resetConversation} className="gap-1.5">
             <RotateCcw className="size-3.5" />
             New chat
@@ -167,6 +179,7 @@ export function ChatPage() {
 
       <PromptComparisonDialog open={compareOpen} onOpenChange={setCompareOpen} />
       <BenchmarkDialog open={benchmarkOpen} onOpenChange={setBenchmarkOpen} />
+      <ObservabilityDialog open={observabilityOpen} onOpenChange={setObservabilityOpen} />
     </div>
   );
 }

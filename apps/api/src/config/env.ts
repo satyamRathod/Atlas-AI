@@ -226,6 +226,19 @@ const envSchema = z.object({
   // Caps how many atomic claims the LLM-as-judge scores per turn — bounds
   // Groq TPM cost when an answer is long.
   EVALUATION_MAX_CLAIMS: z.coerce.number().int().min(1).default(12),
+
+  // Observability (Phase 10) — always-on per-turn Redis traces (prompt
+  // snapshot, tokens, estimated cost, latency stages, retrieval metrics).
+  // See docs/phases/phase-10-observability.md.
+  OBSERVABILITY_ENABLED: booleanFlag(true),
+  OBSERVABILITY_REDIS_PREFIX: z.string().default('atlas:obs:'),
+  // How long a persisted turn trace lingers in Redis (minutes). Default 7 days.
+  OBSERVABILITY_RUN_TTL_MINUTES: z.coerce.number().int().min(1).default(10080),
+  // Truncates each prompt variable (context/summary/memory) when stored.
+  OBSERVABILITY_PROMPT_MAX_CHARS: z.coerce.number().int().min(100).default(2000),
+  // Rough $/1K token estimates for costUsd — placeholders, not live billing.
+  OBSERVABILITY_INPUT_COST_PER_1K_TOKENS: z.coerce.number().min(0).default(0.05),
+  OBSERVABILITY_OUTPUT_COST_PER_1K_TOKENS: z.coerce.number().min(0).default(0.08),
 });
 
 //validate environment variables
